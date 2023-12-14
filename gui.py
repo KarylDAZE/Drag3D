@@ -18,6 +18,9 @@ from torch_utils.ops import filtered_lrelu
 from torch_utils.ops import conv2d_gradfix
 from torch_utils.ops import grid_sample_gradfix
 
+# set os environment
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark = True  # Improves training speed.
 torch.backends.cuda.matmul.allow_tf32 = True  # Improves numerical accuracy.
@@ -201,7 +204,9 @@ class GUI:
         self.light_dir = np.array([0, 0])
         self.mode = 'lambertian'
         self.ambient_ratio = 0.5
-        self.save_path = 'mesh.obj'
+        self.save_path = 'mesh0.obj'
+        # file_path
+        self.load_file_path = None
 
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         self.buffer_overlay = np.zeros((self.W, self.H, 3), dtype=np.float32)
@@ -563,6 +568,21 @@ class GUI:
         with dpg.texture_registry(show=False):
             dpg.add_raw_texture(self.W, self.H, self.buffer_image, format=dpg.mvFormat_Float_rgb, tag="_texture")
 
+        def callback_file_select(sender, app_data, user_data):
+            _t = time.time()
+            dpg.set_value("_log_get_mesh", f'loading...')
+            print(app_data)
+            self.load_file_path = app_data['file_path_name']
+            print("file_path = ", self.load_file_path)
+            dpg.set_value("_log_get_mesh", f'mesh loaded in {time.time() - _t:.4f}s')
+
+
+
+        with dpg.file_dialog(
+            directory_selector=False, show=False, callback=callback_file_select, tag="file_dialog_id",
+            cancel_callback=None, width=700, height=400):
+            dpg.add_file_extension(".obj")
+
         ### register window
 
         # the rendered image, as the primary window
@@ -613,6 +633,12 @@ class GUI:
                         torch.cuda.synchronize()
                         dpg.set_value("_log_get_mesh", f'generated in {time.time() - _t:.4f}s')
 
+
+
+                    def callback_load_mesh(sender, app_data, user_data):
+                        dpg.show_item("file_dialog_id")
+
+
                     # resample geo & tex
                     dpg.add_button(label="get", tag="_button_get_mesh", callback=callback_get_mesh, user_data=0)
                     dpg.bind_item_theme("_button_get_mesh", theme_button)
@@ -622,6 +648,9 @@ class GUI:
                     # keep geo, resample tex
                     dpg.add_button(label="tex", tag="_button_get_mesh_geo", callback=callback_get_mesh, user_data=2)
                     dpg.bind_item_theme("_button_get_mesh_geo", theme_button)
+                    # keep load, load a user-provided 3D model(GAN Inversion)
+                    dpg.add_button(label="load", tag="_button_load_mesh", callback=callback_load_mesh, user_data=3)
+                    dpg.bind_item_theme("_button_load_mesh", theme_button)
 
                     dpg.add_text('', tag="_log_get_mesh")
 
@@ -996,7 +1025,7 @@ class GUI:
             dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Right, callback=callback_keypoint_add)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Right, callback=callback_keypoint_drag)
 
-        dpg.create_viewport(title='Drag3D', width=self.W, height=self.H + (45 if os.name == 'nt' else 0), resizable=False)
+        dpg.create_viewport(title='Drag Your 3DModel', width=self.W, height=self.H + (45 if os.name == 'nt' else 0), resizable=False)
 
         ### global theme
         with dpg.theme() as theme_no_padding:
