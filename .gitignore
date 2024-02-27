@@ -5,3 +5,5 @@ save_inference_results
 tmp_*
 trial*
 *.ttf
+
+data_backup
