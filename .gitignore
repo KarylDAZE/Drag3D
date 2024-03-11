@@ -7,3 +7,5 @@ trial*
 *.ttf
 
 data_backup
+*.pth
+*.txt
