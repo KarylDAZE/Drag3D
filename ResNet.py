@@ -40,7 +40,7 @@ def main():
     data_loader = DataLoader(dataset=Car3DDataSet(), batch_size=1, shuffle=True)
 
     # 开始训练
-    num_epochs = 15
+    num_epochs = 50
     for epoch in range(num_epochs):
         for inputs, targets in data_loader:
             inputs = inputs.to(device)

@@ -30,7 +30,7 @@ def read_mesh_to_ply(directory_path: str, mesh_path: str) -> trimesh.PointCloud:
     texture_image = Image.open(image_name).convert('RGB')
 
     # 采样点的数量
-    number_of_points = 50000
+    number_of_points = 10000
     points, face_indices = mesh.sample(number_of_points, return_index=True)
 
     # 初始化一个颜色列表
