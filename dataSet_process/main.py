@@ -1,5 +1,5 @@
 import seaborn as sns
-import matplotlib.pyplot as plt
+import draw_pic.pyplot as plt
 
 df = sns.load_dataset('iris')
 

@@ -39,6 +39,7 @@ class Car3DDataSet(Dataset):
                         geo_label.append(val)
                 if end_line:
                     geo_labels.append(geo_label[:])
+                    print(geo_label)
                     geo_label.clear()
                     # print(self.geo_labels)
         with open(tex_label_file, 'r') as f:

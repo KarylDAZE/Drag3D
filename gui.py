@@ -19,7 +19,7 @@ from torch_utils.ops import conv2d_gradfix
 from torch_utils.ops import grid_sample_gradfix
 
 # set os environment
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark = True  # Improves training speed.
@@ -32,35 +32,39 @@ filtered_lrelu._init()
 conv2d_gradfix.enabled = True  # Improves training speed.
 grid_sample_gradfix.enabled = True  # Avoids errors with the augmentation pipe.
 
-CUBE_V = np.array([[0,0,0], [0,0,1], [0,1,0], [0,1,1], [1,0,0], [1,0,1], [1,1,0], [1,1,1]])
+CUBE_V = np.array([[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1], [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1]])
 CUBE_E = np.array([[0, 1], [0, 2], [0, 4], [4, 5], [4, 6], [5, 1], [5, 7], [1, 3], [2, 3], [3, 7], [6, 7], [2, 6]])
 
-output_geometry_vertex = open('geometry_vertex_result.txt', 'w+')
-output_geometry_faces = open('geometry_face_result.txt', 'w+')
+# output some value to file
+# output_geometry_vertex = open('geometry_vertex_result.txt', 'w+')
+# output_geometry_faces = open('geometry_face_result.txt', 'w+')
 # geo_output = open('geo_result_backup.txt', 'w+')
 # tex_output = open('tex_result_backup.txt', 'w+')
+sdf_output = open('sdf_output.txt', 'w+')
+
 
 def safe_normalize(x, eps=1e-20):
     return x / torch.sqrt(torch.clamp(torch.sum(x * x, -1, keepdim=True), min=eps))
+
 
 class OrbitCamera:
     def __init__(self, W, H, r=2, fovy=60, near=0.01, far=1000):
         self.W = W
         self.H = H
-        self.radius = r # camera distance from center
-        self.fovy = fovy # in degree
+        self.radius = r  # camera distance from center
+        self.fovy = fovy  # in degree
         self.near = near
         self.far = far
-        self.center = np.array([0, 0, 0], dtype=np.float32) # look at this point
+        self.center = np.array([0, 0, 0], dtype=np.float32)  # look at this point
         self.rot = R.from_matrix(np.eye(3))
-        self.up = np.array([0, 1, 0], dtype=np.float32) # need to be normalized!
+        self.up = np.array([0, 1, 0], dtype=np.float32)  # need to be normalized!
 
     # pose
     @property
     def pose(self):
         # first move camera to radius
         res = np.eye(4, dtype=np.float32)
-        res[2, 3] = self.radius # opengl convention...
+        res[2, 3] = self.radius  # opengl convention...
         # rotate
         rot = np.eye(4, dtype=np.float32)
         rot[:3, :3] = self.rot.as_matrix()
@@ -73,7 +77,7 @@ class OrbitCamera:
     @property
     def view(self):
         return np.linalg.inv(self.pose)
-    
+
     # intrinsics
     @property
     def intrinsics(self):
@@ -85,15 +89,15 @@ class OrbitCamera:
     def perspective(self):
         y = np.tan(np.radians(self.fovy) / 2)
         aspect = self.W / self.H
-        return np.array([[1/(y*aspect),    0,            0,              0], 
-                         [           0,  -1/y,            0,              0],
-                         [           0,    0, -(self.far+self.near)/(self.far-self.near), -(2*self.far*self.near)/(self.far-self.near)], 
-                         [           0,    0,           -1,              0]], dtype=np.float32)
+        return np.array([[1 / (y * aspect), 0, 0, 0],
+                         [0, -1 / y, 0, 0],
+                         [0, 0, -(self.far + self.near) / (self.far - self.near),
+                          -(2 * self.far * self.near) / (self.far - self.near)],
+                         [0, 0, -1, 0]], dtype=np.float32)
 
-    
     def orbit(self, dx, dy):
         # rotate along camera up/side axis!
-        side = self.rot.as_matrix()[:3, 0] # why this is side --> ? # already normalized.
+        side = self.rot.as_matrix()[:3, 0]  # why this is side --> ? # already normalized.
         rotvec_x = self.up * np.radians(-0.05 * dx)
         rotvec_y = side * np.radians(-0.05 * dy)
         self.rot = R.from_rotvec(rotvec_x) * R.from_rotvec(rotvec_y) * self.rot
@@ -105,6 +109,7 @@ class OrbitCamera:
         # pan in camera coordinate system (careful on the sensitivity!)
         self.center += 0.0005 * self.rot.as_matrix()[:3, :3] @ np.array([dx, -dy, dz])
 
+
 class GET3DWrapper:
     def __init__(self, device, G_kwargs, resume_pretrain):
 
@@ -112,15 +117,16 @@ class GET3DWrapper:
 
         common_kwargs = dict(c_dim=0, img_resolution=1024, img_channels=3)
         G_kwargs['device'] = device
-        self.G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).eval().requires_grad_(False).to(device)  # subclass of torch.nn.Module
-        
+        self.G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).eval().requires_grad_(False).to(
+            device)  # subclass of torch.nn.Module
+
         print('[INFO] resume GET3D from pretrained path %s' % (resume_pretrain))
         model_state_dict = torch.load(resume_pretrain, map_location='cpu')
 
         # we only need the ema model
         self.G.load_state_dict(model_state_dict['G_ema'], strict=True)
         del model_state_dict
-       
+
         # some reference for convenience
         self.num_ws_geo_triplane = self.G.synthesis.generator.tri_plane_synthesis.num_ws_geo
         self.num_ws_tex_triplane = self.G.synthesis.generator.tri_plane_synthesis.num_ws_tex
@@ -130,12 +136,14 @@ class GET3DWrapper:
     @torch.no_grad()
     def rgb(self, pos):
         # pos: [N, 3] torch float tensor
-        
+
         # query triplane feature
-        tex_feat = self.G.synthesis.generator.get_texture_prediction(self.mesh.tex_feature, pos.unsqueeze(0), self.mesh.ws_tex_last) # [1, N, C]
+        tex_feat = self.G.synthesis.generator.get_texture_prediction(self.mesh.tex_feature, pos.unsqueeze(0),
+                                                                     self.mesh.ws_tex_last)  # [1, N, C]
 
         # project to rgb space (to_rgb is 1x1 conv, so we can use it as an MLP)
-        rgb = self.G.synthesis.to_rgb(tex_feat.permute(0,2,1).contiguous().unsqueeze(-1), self.mesh.ws_tex_last[:, -1]).squeeze(-1).squeeze(0).t().contiguous()
+        rgb = self.G.synthesis.to_rgb(tex_feat.permute(0, 2, 1).contiguous().unsqueeze(-1),
+                                      self.mesh.ws_tex_last[:, -1]).squeeze(-1).squeeze(0).t().contiguous()
         rgb = (rgb + 1) / 2
 
         return rgb
@@ -147,12 +155,88 @@ class GET3DWrapper:
             geo_z = torch.randn([1, self.G.z_dim], device=self.device)
             # for debug
             # geo_z = torch.tensor([[0.753272688, 0.296991819, -1.24820497, 0.787325835, -0.805077827, -0.111713949, -1.62974443, -0.332180953, 0.513218021, -1.60702336, -0.454748595, -0.743706822, -0.492145097, 0.792238331, 0.436733329, 0.38103351, -0.630071104, 0.296452045, 1.89772475, -0.0364924669, 0.0782783329, 0.35657227, 0.0720969513, -0.212371603, 0.906171381, -2.00251603, 0.144659445, 0.881880462, -0.420410305, -0.240807548, -1.77010536, -0.172361955, 0.998687863, -0.369899124, 0.791702032, 1.15648794, -0.29208082, 0.494948417, 0.439457148, -0.333707035, -1.00744998, 0.392038286, -0.5348804, -0.241231173, -0.935283542, -2.01609421, -0.208738327, -0.325110376, -0.408642977, -0.718103468, 0.532744527, -0.446461588, 1.44745874, 0.103139445, -0.341785818, -1.3401103, 0.0313206837, -1.09517884, 0.841431975, -0.121245533, -0.310638368, -0.386945367, 2.01985383, -1.28647256, 0.164970204, -0.129513085, -0.788557589, 0.501663268, 1.48451293, 0.702844679, -0.699007034, 0.293900371, -2.10779524, 1.88116479, -0.969480217, -0.593614042, -0.230343804, 0.491945535, -1.21341383, -0.784106851, -0.266250938, 0.791017175, -0.694055438, 0.402807325, -0.315916389, -0.0279268213, 0.402846396, -0.300660282, -0.188558728, -1.0962491, -0.496932507, -1.54798639, 0.676095903, -0.104174674, 0.276528001, 1.6510607, -0.283255249, -0.448999763, 0.691247642, 0.409478009, -1.35835564, 0.593913198, -1.63339972, 0.142450154, -1.82102418, 1.10099316, 0.244296417, -1.53568745, -1.14467084, -1.60373342, 0.547231734, 0.229446903, -0.384024471, -0.137766585, -0.00535747595, -0.628430903, 0.648441315, -0.224983826, -0.685280085, 0.25190556, 0.929639935, 0.851748109, -0.592133343, 0.575885594, 0.953272462, 1.67548382, 0.571040213, 1.3409065, -0.781355143, 0.464828491, 0.182650343, -1.25280762, 0.378793538, -0.00213895622, -0.318833649, -0.347590894, -0.301067561, -1.86655402, -0.380036473, 1.32175112, 1.44079161, 2.37885261, 1.018049, 0.0352680385, 0.963887155, -0.440470517, 1.3182658, 1.48888409, 0.404103726, -0.191535443, -0.28713724, -0.102475874, 1.28552961, -0.734030902, 2.0983274, 0.668867946, -1.26624763, -0.0436506197, 1.03272605, -1.24680817, 0.811740696, 0.144679025, -0.793309808, -0.298471183, -2.30150533, -0.698901296, 1.9119153, -0.399982125, -0.0437663421, -0.497897446, -0.99044162, 0.0568263121, 0.370549113, -2.00468159, -0.035708461, -1.39991927, -0.773647487, -1.73149836, 0.36512956, -0.291350603, 0.731193006, -0.509116054, -0.663447738, 0.344364017, -0.78793484, 0.20211342, -1.84420717, 0.816509724, -0.42424944, -1.24472654, -0.949420989, -0.347996891, 1.25970054, -0.126141757, -0.979447246, 1.0182265, -0.690194607, 0.0593707822, 0.319132656, 0.268361121, 0.545027971, 0.532950342, -1.16109097, 0.231194749, 0.406146795, -0.437881142, -0.148385525, -0.310033262, -0.120783754, 0.337275475, 3.08132744, -0.412988782, 0.468108416, -0.0951634124, 1.46477783, 1.0672853, -0.698983788, -1.08916152, 1.38075805, -0.845378518, -0.78315264, -1.31151199, 0.377555162, 0.522754788, -1.79078507, 0.0522151254, -0.972731471, -0.0671110675, 0.409369558, -0.460662901, 0.350436568, -0.530073285, -0.591002822, -0.599092364, 1.14860213, 0.69147706, -0.602198482, -0.551573992, 1.70442533, -1.09332299, 0.44047448, 0.215262726, 0.10274604, -0.0996476561, -0.202015564, -1.45247138, 0.22797513, 0.405330926, -1.58915424, -0.333203256, -0.256792337, 1.32750213, 1.55872142, -1.0536685, -0.339072496, -0.891303301, 0.609531879, -1.62904906, 0.243397459, 0.0150706964, 0.928118706, 0.138376459, -0.379651517, 0.245403707, 0.804626524, 0.0898758918, 1.44875264, -0.492684156, 0.293376535, -0.104835749, 0.236348867, -1.22827613, 0.912163258, 0.605282903, -1.58374715, -0.508844852, 0.823317945, 1.02127779, 0.649007022, -0.497948855, -1.1073842, 0.508327782, -1.27743638, -0.521933019, -0.206576452, 0.635091066, -2.36031818, -0.908052683, -1.33847213, -0.249295071, -1.31569588, -1.55560744, -1.25010335, -0.567612231, -1.50538695, -0.478015423, -0.188747808, 1.27458239, 1.12427104, -0.736912131, 2.37125087, 0.0530954078, 2.10840893, -0.620102286, 0.654610753, 0.289151907, 0.295930207, -1.421525, 1.04861975, -0.292822778, -0.888429701, 0.821510911, -1.24767315, -2.80969739, -0.624545753, 0.126416132, 0.357494503, -1.04874992, 0.274019927, -0.825762272, -1.44125426, -0.0428592153, 0.746896863, -0.512284458, -0.125718489, 0.31948337, 1.26653457, -0.830724299, 0.825067401, 0.0176626109, -0.225348517, -0.181749567, 0.404600382, 0.682323813, -0.992933035, 0.761570334, -0.213552728, 1.36356044, 1.50360668, 1.44184971, -1.96018505, 0.406603634, 0.00298209791, 0.866151512, 1.69401455, 1.44958615, 0.936862648, 1.56871414, 0.806346655, -1.51373255, 0.0661646351, -0.00237210025, -0.177940547, -0.00518651819, -0.955150545, -0.329158008, 0.231181249, -0.187004939, 0.337267876, -1.92224932, 1.39618838, 0.643569708, 0.724248946, 2.20512795, 1.6377238, 0.237934917, -1.6335026, 0.0559253283, 0.763756335, 0.763623714, -1.42413962, -0.613972545, -0.308091849, 0.70613265, 0.205167979, -0.360122472, -1.24555421, -1.85179865, 0.421482593, -0.810388327, 0.400969952, 1.97002959, -2.3589735, -1.47887504, 1.05475092, -0.871976495, 0.816008508, 1.00557303, 0.104562581, -0.949092984, 0.146504536, 0.325388551, -0.370379359, -0.461832017, -0.0555030927, 1.25012577, 0.149461895, -0.0460594147, 0.499283552, -0.321211249, -1.42435396, 2.10887146, 0.731175721, 0.0839683712, 1.47635305, -0.990960896, 0.347044438, 0.301298678, -1.3066144, -0.811994612, 0.0497791395, -0.0772253871, 0.37758407, 0.426294833, 1.36589348, -0.148961574, -0.557963312, -0.311530173, 0.271318078, -0.122376218, 2.67683554, -0.414072812, -0.890226781, -1.66619432, -0.215325817, -1.51884186, -1.23421586, 0.230474636, 0.944761634, 0.146130413, 1.4347508, -1.01470017, 1.97903466, -0.395918369, -0.365335464, 0.434745252, 1.0197078, -3.07724714, -0.417604089, -1.54624212, 0.971958518, 0.136043891, 0.0833265036, -1.07920337, -1.04677474, -1.38201964, 1.76570952, 1.50161648, 0.359305739, 0.759262383, -0.661077201, -1.12733257, 0.0419325791, 0.83561182, 0.779848635, 1.3710649, 0.830302536, -1.59874558, -1.50013065, 1.68919599, -3.05788898, -0.401770383, -0.724525511, 2.32738161, 0.217601717, 0.922135532, -0.334319741, 0.473627716, 0.422929972, -1.16089177, -1.32980669, -0.121641159, 2.01644778, -0.415033132, 0.155970722, 0.469291061, 1.89295363, 0.72506249, 0.671732605, 0.695818901, -0.691303194, 0.241862342, 0.404909343, 0.0972672179, -0.436567605, -0.773598194, -0.325885117, -2.12995434, 0.237614661, -1.14276254, 0.697127402, 0.255344808, 0.0653533265, -0.731938541, -0.189940691, 0.18776916, -1.09955335, -1.43824184, -1.03059328, -1.63221061, -0.311439395, -0.985448897, -1.65505588, -1.15317369, -0.733492672, -0.130378023, 0.336827576, 0.833500743, 0.101183645, 0.360810339, -0.411266714, -0.697299063]], dtype=torch.float32,device=self.device)
+            # geo_z = torch.tensor([[0.11714879, -0.0353207, 1.8564, -1.39136, 0.2054303, -1.0188247, 0.13567097,
+            #                        1.8677385, -0.7289394, 3.298498, 0.6304539, 1.077066, 0.4167829, 0.025812,
+            #                        -0.04811468, -0.2597425, -0.14970636, -2.1349537, 1.1731634, 2.5552046, -0.00743952,
+            #                        -0.1518271, 0.5101196, 0.06008521, 0.98551923, -0.30372682, 1.3059928, 0.9424531,
+            #                        0.7534476, 1.2437686, 0.99708056, 1.1888328, 0.52333575, -2.384899, 0.5575154,
+            #                        -0.34195736, 1.079658, -0.39046267, -0.4978557, -0.11721276, -0.05819057, -1.7368629,
+            #                        -0.48648393, -0.9428808, -2.3398244, -0.5006484, -0.45876682, -1.2168411, 0.3181331,
+            #                        0.3247721, -1.0976429, -2.3074605, -0.07665735, -0.18019079, -1.9977579, -0.43932486,
+            #                        0.3357573, -0.45435792, -0.47526312, -0.12186591, -0.1127122, -0.9791017, -1.5900723,
+            #                        -0.49355075, 0.48734, 0.32273006, 0.47607026, 1.6968211, 1.3009319, 1.7232283,
+            #                        -0.20986998, -1.8473549, -0.12211484, 1.3552938, 1.1947433, 1.245384, -1.4412434,
+            #                        -0.18821149, 0.37095752, 0.21150129, 0.69551617, 0.55716527, -0.22393078, 0.7639658,
+            #                        0.97498196, 0.44723216, -0.3615519, -1.1672847, 1.6110783, -0.18942279, -1.3388366,
+            #                        0.1455722, -0.9542558, -0.19782726, 0.9792801, -0.7411086, -0.80132246, -2.2360344,
+            #                        0.8519004, -1.1274782, -1.0910345, -0.258075, 0.29238814, 0.783967, -1.3316163,
+            #                        -0.73550206, -1.7313862, -0.40801644, -0.16628915, -0.15100749, 1.7067666, 1.4712367,
+            #                        -1.3995584, 0.7541103, 0.88746154, 0.88565546, 0.11283661, -0.20662417, -0.7038669,
+            #                        1.4003346, -0.12561311, -0.5450087, 0.2890766, 0.49954456, 1.8289087, 1.058887,
+            #                        0.57834977, 0.03735071, -0.54229844, 1.0627111, 0.4843812, -0.5746527, -0.44453445,
+            #                        -0.7954574, -0.22429302, -1.4026417, -0.9913354, 0.75758964, -0.24837272,
+            #                        -0.16645594, -0.36864826, -0.91797537, 1.1654072, 0.22070289, 0.8094153, -0.3134202,
+            #                        0.34907398, -0.31533283, 0.3773163, 0.26758638, 0.5897188, -1.4254729, 0.5365358,
+            #                        -0.02375702, 1.607374, 1.0080272, 0.5940322, -0.85744715, 4.026755, 1.4868395,
+            #                        0.66328406, -1.1501434, 0.33935425, -0.04728467, -0.45239288, -1.8304696, -1.7149607,
+            #                        -1.5243989, 0.8692341, 0.8444632, 1.0258979, -0.9743449, 0.29551223, 0.2701856,
+            #                        0.36421257, -0.17962891, -0.28099346, -1.270756, -0.5219456, 0.81335545, 1.8100369,
+            #                        -1.630277, 0.49688187, -0.9862172, 1.4949472, -0.58981836, 0.5836896, 0.16974893,
+            #                        -0.14760159, -1.3306473, -0.4910129, 0.150658, 1.4777405, 0.03924527, 0.38831094,
+            #                        -0.1284309, -0.6872827, 0.5110146, 0.5217115, 0.5001682, 0.0348946, -0.42356968,
+            #                        0.09025088, 1.8470286, 1.0733156, -0.3894787, 0.01881294, 2.0404165, 0.5387025,
+            #                        -0.29312918, 0.30287957, 0.9593559, 0.36729205, 0.06022382, -0.477142, -0.19419359,
+            #                        -0.47440058, -0.19505206, -0.5053257, -1.7260599, -0.29965883, -1.6665142, 0.9740663,
+            #                        -0.8356745, 1.3501155, 0.5702115, -0.23599193, -1.4080474, 0.5122427, -0.27245298,
+            #                        -1.1788119, 1.722387, -0.65904975, -0.3457894, -1.927094, 0.01366665, 1.541636,
+            #                        -0.72626656, -0.04655613, -0.85033023, -1.5564579, -0.5812882, -0.12402881,
+            #                        -0.49185464, 1.1586914, -0.18674019, 0.5605349, 0.04442729, -1.5405805, -1.4015938,
+            #                        -1.3923136, -1.0456434, -0.70358294, -0.6717833, -1.1962354, -0.46048152, -1.3872721,
+            #                        -0.2483533, 1.2225147, 2.0737178, -0.72632444, 1.9372203, -0.38073757, 1.2247343,
+            #                        0.10966773, -0.02155912, -0.67916614, 0.29377598, 0.6983725, -0.71156794, 0.6072914,
+            #                        -0.99072915, -0.49076098, -0.6163564, -1.224337, -0.650917, -0.41112313, 0.7280888,
+            #                        0.14028622, 0.12223186, -0.4259156, -1.4984254, 0.2838225, 1.1567937, -1.157683,
+            #                        2.1784182, 0.56795096, -1.0724945, -1.4092306, -0.9274714, -0.62964493, 0.21656765,
+            #                        -0.25884095, -0.25014755, -0.1359699, 1.8011665, 0.9928146, -1.3053383, 0.0919214,
+            #                        1.3151248, 0.07077574, -0.10026688, 1.660283, -0.58266586, -0.55669427, -0.6037083,
+            #                        0.869518, 0.44971022, -1.836456, 0.06221904, -0.9945863, -1.1389412, 1.0712814,
+            #                        -1.1956464, 0.20965043, 0.7941904, -0.16021818, 0.41485953, 1.7523444, 1.9512628,
+            #                        -1.279988, -0.39865187, -0.82000303, -0.3507458, -0.92102444, 0.42793384, -0.5895951,
+            #                        -0.876703, -0.5903537, -0.91393274, 0.22052652, 2.9861672, -0.40827262, -0.32116896,
+            #                        0.9723984, -1.1756063, 0.62303317, 0.6490924, -0.28003207, -1.1943412, 0.98191065,
+            #                        -0.7189963, -0.5577395, 0.2134372, -0.8401078, 0.64894336, -0.6912929, 1.385471,
+            #                        0.14651471, -1.4367325, -0.15588793, 1.1862481, 2.0672314, 0.01839989, -1.1525774,
+            #                        2.1060884, 0.04041211, 0.35728797, -0.0672386, -1.0067269, 2.5161128, 0.4001252,
+            #                        0.2365438, 0.95365274, -1.5225393, 0.70838815, 1.4125185, 0.4530028, 0.4204981,
+            #                        -0.52793527, -0.1873703, 2.4119625, -0.18324381, 0.6517607, -0.76867485, -1.0112268,
+            #                        -0.03567329, 1.2652775, -0.7489392, -1.5913604, -0.36434263, -1.4313021, 0.291485,
+            #                        0.5018079, -0.6484634, -0.8895231, -0.92637444, -0.21117042, 0.5553784, 0.17575459,
+            #                        0.63046694, -1.3527833, 1.8903857, -0.94671106, -0.8130621, 2.8224623, -0.5774717,
+            #                        -0.9528961, -0.37084934, -0.53115034, -0.70595384, 0.8078177, -0.77321416,
+            #                        -0.46316063, -0.3339075, -0.23475215, -1.2850943, -0.19766939, -0.24787448,
+            #                        -0.05914629, -0.05780281, -1.0611571, 0.84548444, 0.17219964, -0.3997898, 0.5673536,
+            #                        -0.6835103, -1.5797968, -0.021745, 1.3477505, 0.80096203, -0.8084325, -0.45875832,
+            #                        2.002499, 0.31859732, -0.64297175, 1.0909982, -1.0595665, 1.67071, -1.4926009,
+            #                        0.6879706, 1.6446459, 0.66322064, 0.2706807, -0.63138604, -0.9357041, 0.6953449,
+            #                        -0.85562944, 1.2724583, -1.6427946, 0.5318019, 0.6196857, 0.26187724, 0.7090226,
+            #                        -0.33405548, 0.2061381, -1.683733, 0.65110946, 0.97021765, -1.5931826, 0.9485156,
+            #                        0.9332046, 0.33159226, -1.1870818, 0.8477318, 0.5706379, -1.6670241, -0.28891173,
+            #                        -0.50970286, -1.9936731, -0.89934766, -1.8558115, 0.4750642, -0.10441063,
+            #                        -0.06425755, 1.5331532, -0.47791484, 0.9189392, -1.8658619, 0.15818647, 0.256412,
+            #                        -1.6399199, 0.95050293, 0.4570022, -0.19328123, -0.9485631, 0.20237954, -1.0524381,
+            #                        -0.5458965, 0.01382571, -0.01129495, 0.90773594, 2.7247684, -0.54233736, -0.29038864,
+            #                        0.05878051, -0.32032588, 0.5817058, 1.4072855, -0.14576933, -0.07955037, -1.6640503,
+            #                        -0.42034355, 0.41706643, 1.1872363, 1.2405248, 0.37488067, 1.3141733, 0.11879504,
+            #                        1.4031179, 0.4342962, -1.3556609, 0.3283875, -0.16117562, 1.3371091, 2.435749,
+            #                        0.20532225, -0.91795903, -0.3708177, -0.00705428, 0.47749114, 0.05917219]],
+            #                      dtype=torch.float32, device=self.device)
             # geo_output.write(str(np.asarray(geo_z.cpu())) + '\n')
 
-        ws_geo = self.G.mapping_geo(geo_z, None, truncation_psi=0.7, truncation_cutoff=None, update_emas=False) # [1, 22, 512]
-        
+        ws_geo = self.G.mapping_geo(geo_z, None, truncation_psi=0.7, truncation_cutoff=None,
+                                    update_emas=False)  # [1, 22, 512]
+
         return ws_geo
-    
+
     @torch.no_grad()
     def sample_tex(self, tex_z=None):
 
@@ -160,34 +244,35 @@ class GET3DWrapper:
             tex_z = torch.randn([1, self.G.z_dim], device=self.device)
             # print(tex_z)
             # tex_output.write(str(np.asarray(tex_z.cpu())) + '\n')
-        ws_tex = self.G.mapping(tex_z, None, truncation_psi=0.7, truncation_cutoff=None, update_emas=False) # [1, 9, 512]
+        ws_tex = self.G.mapping(tex_z, None, truncation_psi=0.7, truncation_cutoff=None,
+                                update_emas=False)  # [1, 9, 512]
         return ws_tex
 
     def generate(self, ws_geo=None, ws_tex=None, geo_z=None, tex_z=None):
-        
+
         if ws_geo is None:
             ws_geo = self.sample_geo(geo_z)
-        
+
         if ws_tex is None:
             ws_tex = self.sample_tex(tex_z)
 
         sdf_feature, tex_feature = self.G.synthesis.generator.get_feature(
-            ws_tex[:, :self.num_ws_tex_triplane], # 7
-            ws_geo[:, :self.num_ws_geo_triplane] # 20
-        ) # [1, 96, 256, 256] x 2, triplane features
+            ws_tex[:, :self.num_ws_tex_triplane],  # 7
+            ws_geo[:, :self.num_ws_geo_triplane]  # 20
+        )  # [1, 96, 256, 256] x 2, triplane features
 
-        ws_tex_last = ws_tex[:, self.num_ws_tex_triplane:].contiguous() # [1, 2, 512]
-        ws_geo_last = ws_geo[:, self.num_ws_geo_triplane:].contiguous() # [1, 2, 512]
+        ws_tex_last = ws_tex[:, self.num_ws_tex_triplane:].contiguous()  # [1, 2, 512]
+        ws_geo_last = ws_geo[:, self.num_ws_geo_triplane:].contiguous()  # [1, 2, 512]
 
         # geometry
-        v, f, sdf, deformation, v_deformed, sdf_reg_loss = self.G.synthesis.get_geometry_prediction(ws_geo_last, sdf_feature)
-        v_on_cpu = v[0].cpu().detach().numpy()
-        v_list_data = v_on_cpu.tolist()
-        output_geometry_vertex.write(str(v_list_data) + '\n')
-        f_on_cpu = f[0].cpu().detach().numpy()
-        f_list_data = f_on_cpu.tolist()
-        output_geometry_faces.write(str(f_list_data) + '\n')
-
+        v, f, sdf, deformation, v_deformed, sdf_reg_loss = self.G.synthesis.get_geometry_prediction(ws_geo_last,
+                                                                                                    sdf_feature)
+        # v_on_cpu = v[0].cpu().detach().numpy()
+        # v_list_data = v_on_cpu.tolist()
+        # output_geometry_vertex.write(str(v_list_data) + '\n')
+        # f_on_cpu = f[0].cpu().detach().numpy()
+        # f_list_data = f_on_cpu.tolist()
+        # output_geometry_faces.write(str(f_list_data) + '\n')
 
         # build mesh object
         self.mesh = Mesh(v=v[0].float().contiguous(), f=f[0].int().contiguous(), device=self.device)
@@ -203,19 +288,21 @@ class GET3DWrapper:
 
         return self.mesh
 
+
 def make_offsets(r, device):
-    p = torch.arange(-r, r+1, device=device)
+    p = torch.arange(-r, r + 1, device=device)
     px, py, pz = torch.meshgrid(p, p, p, indexing='ij')
-    offsets = torch.stack([px.reshape(-1), py.reshape(-1), pz.reshape(-1)], dim=-1) # [B = (2 * r1 + 1) ** 3, 3]
+    offsets = torch.stack([px.reshape(-1), py.reshape(-1), pz.reshape(-1)], dim=-1)  # [B = (2 * r1 + 1) ** 3, 3]
     return offsets
+
 
 class GUI:
     def __init__(self, opt):
-        self.opt = opt # shared with the trainer's opt to support in-place modification of rendering parameters.
+        self.opt = opt  # shared with the trainer's opt to support in-place modification of rendering parameters.
         self.W = opt.W
         self.H = opt.H
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
-        self.bg_color = torch.ones(3, dtype=torch.float32) # default white bg
+        self.bg_color = torch.ones(3, dtype=torch.float32)  # default white bg
         self.light_dir = np.array([0, 0])
         self.mode = 'lambertian'
         self.ambient_ratio = 0.5
@@ -225,12 +312,12 @@ class GUI:
 
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         self.buffer_overlay = np.zeros((self.W, self.H, 3), dtype=np.float32)
-        self.buffer_rast = None # for 2D to 3D projection
+        self.buffer_rast = None  # for 2D to 3D projection
 
-        self.need_update = True # update buffer_image
-        self.need_update_overlay = True # update buffer_overlay
+        self.need_update = True  # update buffer_image
+        self.need_update_overlay = True  # update buffer_overlay
 
-        self.glctx = dr.RasterizeCudaContext() # dr.RasterizeGLContext()
+        self.glctx = dr.RasterizeCudaContext()  # dr.RasterizeGLContext()
 
         # load model
         self.device = torch.device('cuda')
@@ -251,8 +338,8 @@ class GUI:
         self.bbox_points = [[-1, -1, -1], [1, 1, 1]]
         self.enable_bbox_loss = False
         # TODO: a suitable batch size and weight
-        self.bbox_batch = 4096 
-        self.bbox_loss_weight = 1 # 20 in paper...
+        self.bbox_batch = 4096
+        self.bbox_loss_weight = 1  # 20 in paper...
 
         # training stuff
         self.training = False
@@ -260,38 +347,37 @@ class GUI:
         self.ws_geo_param = None
         self.ws_geo_nonparam = None
         self.lr = 0.002
-        self.r1 = 3 # 3
-        self.r2 = 9 # 12
+        self.r1 = 3  # 3
+        self.r2 = 9  # 12
 
         self.offsets1 = make_offsets(self.r1, self.device)
         self.offsets2 = make_offsets(self.r2, self.device)
 
         self.step = 0
-        self.train_steps = 1 # steps per rendering loop
+        self.train_steps = 1  # steps per rendering loop
 
         dpg.create_context()
         self.register_dpg()
         self.test_step()
-        
 
     def __del__(self):
         dpg.destroy_context()
 
-
     def prepare_train(self):
         assert self.mesh is not None, 'must generate a mesh before training'
-        assert len(self.points_mask) > 0 and np.any(self.points_mask), 'must mark at least a drag point pair before training'
+        assert len(self.points_mask) > 0 and np.any(
+            self.points_mask), 'must mark at least a drag point pair before training'
 
         # TODO: optimize how many layers is the best? need to be verified...
         # self.ws_geo_param = torch.nn.Parameter(self.mesh.ws_geo.clone()) # [1, l, 512]
         # self.optimizer = torch.optim.AdamW([self.ws_geo_param], lr=self.lr)
 
         # l_start = 4 # skip optimizing early feature layers as suggested in paper
-        l_start = 3 # try to optimize an early feature layer to generate a better result for large scale drag
-        self.ws_geo_nonparam = self.mesh.ws_geo[:, :l_start].clone() # [1, l, 512]
-        self.ws_geo_param = torch.nn.Parameter(self.mesh.ws_geo[:, l_start:].clone()) # [1, 22-l, 512]
+        l_start = 4  # try to optimize an early feature layer to generate a better result for large scale drag
+        self.ws_geo_nonparam = self.mesh.ws_geo[:, :l_start].clone()  # [1, l, 512]
+        self.ws_geo_param = torch.nn.Parameter(self.mesh.ws_geo[:, l_start:].clone())  # [1, 22-l, 512]
         self.optimizer = torch.optim.Adam([self.ws_geo_param], lr=self.lr)
-        
+
         self.step = 0
 
         # keep a copy of the original sdf feature for bbox loss
@@ -313,30 +399,38 @@ class GUI:
             ws_geo = torch.cat([self.ws_geo_nonparam, self.ws_geo_param], dim=1)
             ws_tex = self.mesh.ws_tex
             sdf_feature, tex_feature = self.model.G.synthesis.generator.get_feature(
-                ws_tex[:, :self.model.num_ws_tex_triplane], # 7
-                ws_geo[:, :self.model.num_ws_geo_triplane] # 20
-            ) # [1, 96, 256, 256] x 2, triplane features
+                ws_tex[:, :self.model.num_ws_tex_triplane],  # 7
+                ws_geo[:, :self.model.num_ws_geo_triplane]  # 20
+            )  # [1, 96, 256, 256] x 2, triplane features
 
             # get drag point pairs (no need to have grad)
             with torch.no_grad():
                 mask_points = torch.tensor(self.points_mask, dtype=torch.bool, device=self.device)
-                source_points = torch.tensor(self.points_3d, dtype=torch.float32, device=self.device)[mask_points] # [N, 3]
-                target_points = source_points + torch.tensor(self.points_3d_delta, dtype=torch.float32, device=self.device)[mask_points]
+                source_points = torch.tensor(self.points_3d, dtype=torch.float32, device=self.device)[
+                    mask_points]  # [N, 3]
+                target_points = source_points + \
+                                torch.tensor(self.points_3d_delta, dtype=torch.float32, device=self.device)[mask_points]
                 directions = safe_normalize(target_points - source_points)
 
-                resolution = sdf_feature.shape[-1] # 256
-                step_size = 0.1 / resolution # critical! should be small enough to make point tracking possible
-                
+                resolution = sdf_feature.shape[-1]  # 256
+                step_size = 0.1 / resolution  # critical! should be small enough to make point tracking possible
+
                 # expand source to a patch based on radius
-                patched_points = source_points.unsqueeze(0) + step_size * self.offsets1.unsqueeze(1) # [B, N, 3]
+                patched_points = source_points.unsqueeze(0) + step_size * self.offsets1.unsqueeze(1)  # [B, N, 3]
                 B, N = patched_points.shape[:2]
 
                 # shift points
-                shifted_points = patched_points + step_size * directions # [B, N, 3]
+                shifted_points = patched_points + step_size * directions  # [B, N, 3]
 
             # query feat and calc loss
-            patched_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(sdf_feature, patched_points.reshape(1, -1, 3), return_feats=True).reshape(B, N, -1) # [B, N, C]
-            shifted_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(sdf_feature, shifted_points.reshape(1, -1, 3), return_feats=True).reshape(B, N, -1) # [B, N, C]
+            patched_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(sdf_feature,
+                                                                                   patched_points.reshape(1, -1, 3),
+                                                                                   return_feats=True).reshape(B, N,
+                                                                                                              -1)  # [B, N, C]
+            shifted_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(sdf_feature,
+                                                                                   shifted_points.reshape(1, -1, 3),
+                                                                                   return_feats=True).reshape(B, N,
+                                                                                                              -1)  # [B, N, C]
 
             loss = F.l1_loss(shifted_feat, patched_feat.detach())
 
@@ -344,16 +438,23 @@ class GUI:
             if self.enable_bbox_loss:
                 # sample random points in side mesh's aabb
                 vmin, vmax = self.mesh.aabb()
-                rand_points = torch.rand([self.bbox_batch, 3], dtype=torch.float32, device=self.device) * (vmax - vmin) + vmin # [B, 3]
+                rand_points = torch.rand([self.bbox_batch, 3], dtype=torch.float32, device=self.device) * (
+                            vmax - vmin) + vmin  # [B, 3]
                 # remove those falling into our bbox
-                in_bbox_mask = (rand_points > torch.tensor(self.bbox_points[0], dtype=torch.float32, device=rand_points.device)).all(dim=1) & \
-                               (rand_points < torch.tensor(self.bbox_points[1], dtype=torch.float32, device=rand_points.device)).all(dim=1) # [B]
-                rand_points = rand_points[~in_bbox_mask] 
+                in_bbox_mask = (rand_points > torch.tensor(self.bbox_points[0], dtype=torch.float32,
+                                                           device=rand_points.device)).all(dim=1) & \
+                               (rand_points < torch.tensor(self.bbox_points[1], dtype=torch.float32,
+                                                           device=rand_points.device)).all(dim=1)  # [B]
+                rand_points = rand_points[~in_bbox_mask]
                 # keep out-of-bbox points feature fixed
                 if rand_points.shape[0] > 0:
                     with torch.no_grad():
-                        original_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(self.original_sdf_feature, rand_points.reshape(1, -1, 3), return_feats=True)
-                    current_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(sdf_feature, rand_points.reshape(1, -1, 3), return_feats=True)
+                        original_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(
+                            self.original_sdf_feature, rand_points.reshape(1, -1, 3), return_feats=True)
+                    current_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(sdf_feature,
+                                                                                           rand_points.reshape(1, -1,
+                                                                                                               3),
+                                                                                           return_feats=True)
                     bbox_loss = F.l1_loss(current_feat, original_feat)
                     loss = loss + self.bbox_loss_weight * bbox_loss
 
@@ -364,10 +465,10 @@ class GUI:
 
             ### point tracking (update points_3d)
             with torch.no_grad():
-                source_feat = patched_feat[(B - 1) // 2] # [N, C]
+                source_feat = patched_feat[(B - 1) // 2]  # [N, C]
 
                 # expand source to a patch based on a larger radius
-                patched_points = source_points.unsqueeze(0) + step_size * self.offsets1.unsqueeze(1) # [B, N, 3]
+                patched_points = source_points.unsqueeze(0) + step_size * self.offsets1.unsqueeze(1)  # [B, N, 3]
                 B, N = patched_points.shape[:2]
 
                 # calculate updated sdf_feature
@@ -375,27 +476,34 @@ class GUI:
                 ws_geo = torch.cat([self.ws_geo_nonparam, self.ws_geo_param], dim=1)
                 ws_tex = self.mesh.ws_tex
                 new_sdf_feature, new_tex_feature = self.model.G.synthesis.generator.get_feature(
-                    ws_tex[:, :self.model.num_ws_tex_triplane], # 7
-                    ws_geo[:, :self.model.num_ws_geo_triplane] # 20
-                ) # [1, 96, 256, 256] x 2, triplane features
+                    ws_tex[:, :self.model.num_ws_tex_triplane],  # 7
+                    ws_geo[:, :self.model.num_ws_geo_triplane]  # 20
+                )  # [1, 96, 256, 256] x 2, triplane features
 
-                new_patched_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(new_sdf_feature, patched_points.reshape(1, -1, 3), return_feats=True).reshape(B, N, -1) # [B, N, C]
+                new_patched_feat = self.model.G.synthesis.generator.get_sdf_def_prediction(new_sdf_feature,
+                                                                                           patched_points.reshape(1, -1,
+                                                                                                                  3),
+                                                                                           return_feats=True).reshape(B,
+                                                                                                                      N,
+                                                                                                                      -1)  # [B, N, C]
 
                 # nearest neighbor
-                dist = torch.mean((new_patched_feat - source_feat) ** 2, dim=-1) # [B, N]
+                dist = torch.mean((new_patched_feat - source_feat) ** 2, dim=-1)  # [B, N]
                 # dist[(B - 1) // 2] = 1e8 # forbid always staying in the same point...
-                indices = torch.argmin(dist, dim=0) # [N]
+                indices = torch.argmin(dist, dim=0)  # [N]
                 # print(indices)
 
                 # update points_3d and delta
-                new_source_points = torch.gather(patched_points, dim=0, index=indices.view(1,-1,1).repeat(1,1,3)).squeeze(1) # [N, 3]
-                new_points_delta = target_points - new_source_points # [N, 3]
+                new_source_points = torch.gather(patched_points, dim=0,
+                                                 index=indices.view(1, -1, 1).repeat(1, 1, 3)).squeeze(1)  # [N, 3]
+                new_points_delta = target_points - new_source_points  # [N, 3]
 
                 # need to add back those deleted points... this should be improved...
                 new_source_points_with_deleted = np.array(self.points_3d)
                 new_source_points_with_deleted[np.array(self.points_mask)] = new_source_points.detach().cpu().numpy()
                 new_source_points_delta_with_deleted = np.array(self.points_3d_delta)
-                new_source_points_delta_with_deleted[np.array(self.points_mask)] = new_points_delta.detach().cpu().numpy()
+                new_source_points_delta_with_deleted[
+                    np.array(self.points_mask)] = new_points_delta.detach().cpu().numpy()
 
                 self.points_3d = new_source_points_with_deleted.tolist()
                 self.points_3d_delta = new_source_points_delta_with_deleted.tolist()
@@ -403,15 +511,16 @@ class GUI:
         # update mesh for rendering
         with torch.no_grad():
             # update geometry
-            v, f, sdf, deformation, v_deformed, sdf_reg_loss = self.model.G.synthesis.get_geometry_prediction(self.mesh.ws_geo_last, new_sdf_feature)
-
+            v, f, sdf, deformation, v_deformed, sdf_reg_loss = self.model.G.synthesis.get_geometry_prediction(
+                self.mesh.ws_geo_last, new_sdf_feature)
+            # sdf_output.write(str(np.asarray(sdf.cpu()).tolist()) + '\n')
             # build mesh object
             mesh = Mesh(v=v[0].float().contiguous(), f=f[0].int().contiguous(), device=self.device)
             mesh.auto_normal()
 
-            ws_tex_last = ws_tex[:, self.model.num_ws_tex_triplane:].contiguous() # [1, 2, 512]
-            ws_geo_last = ws_geo[:, self.model.num_ws_geo_triplane:].contiguous() # [1, 2, 512]
-            
+            ws_tex_last = ws_tex[:, self.model.num_ws_tex_triplane:].contiguous()  # [1, 2, 512]
+            ws_geo_last = ws_geo[:, self.model.num_ws_geo_triplane:].contiguous()  # [1, 2, 512]
+
             # bind features to mesh for convenience
             mesh.sdf_feature = new_sdf_feature
             mesh.ws_geo = ws_geo
@@ -444,10 +553,9 @@ class GUI:
         # if train_steps > self.train_steps * 1.2 or train_steps < self.train_steps * 0.8:
         #     self.train_steps = train_steps
 
-    
     @torch.no_grad()
     def test_step(self):
-        
+
         # ignore if no need to update
         if not self.need_update and not self.need_update_overlay:
             return
@@ -461,19 +569,20 @@ class GUI:
             if self.mesh is not None:
 
                 # do MVP for vertices
-                mv = torch.from_numpy(self.cam.view).cuda() # [4, 4]
-                proj = torch.from_numpy(self.cam.perspective).cuda() # [4, 4]
+                mv = torch.from_numpy(self.cam.view).cuda()  # [4, 4]
+                proj = torch.from_numpy(self.cam.perspective).cuda()  # [4, 4]
                 mvp = proj @ mv
-                
-                v_clip = torch.matmul(F.pad(self.mesh.v, pad=(0, 1), mode='constant', value=1.0), torch.transpose(mvp, 0, 1)).float().unsqueeze(0)  # [1, N, 4]
+
+                v_clip = torch.matmul(F.pad(self.mesh.v, pad=(0, 1), mode='constant', value=1.0),
+                                      torch.transpose(mvp, 0, 1)).float().unsqueeze(0)  # [1, N, 4]
 
                 rast, rast_db = dr.rasterize(self.glctx, v_clip, self.mesh.f, (self.H, self.W))
-                
+
                 if self.mode == 'depth':
                     depth = rast[0, :, :, [2]]  # [H, W, 1]
-                    buffer_image = depth.detach().cpu().numpy().repeat(3, -1) # [H, W, 3]
+                    buffer_image = depth.detach().cpu().numpy().repeat(3, -1)  # [H, W, 3]
                 else:
-                    pos, _ = dr.interpolate(self.mesh.v.unsqueeze(0), rast, self.mesh.f) # [1, H, W, 3]
+                    pos, _ = dr.interpolate(self.mesh.v.unsqueeze(0), rast, self.mesh.f)  # [1, H, W, 3]
 
                     pos = pos.view(-1, 3)
                     mask = (rast[..., 3] > 0).view(-1)
@@ -483,8 +592,8 @@ class GUI:
                     albedo = albedo.view(1, self.H, self.W, 3)
                     alpha = (rast[..., [3]] > 0).float()
 
-                    albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).clamp(0, 1) # [1, H, W, 3]
-                    alpha = dr.antialias(alpha, rast, v_clip, self.mesh.f).clamp(0, 1) # [1, H, W, 1]
+                    albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).clamp(0, 1)  # [1, H, W, 3]
+                    alpha = dr.antialias(alpha, rast, v_clip, self.mesh.f).clamp(0, 1)  # [1, H, W, 1]
 
                     if self.mode == 'albedo':
                         buffer_image = albedo[0]
@@ -501,9 +610,10 @@ class GUI:
                                 np.sin(light_d[0]) * np.cos(light_d[1]),
                             ], dtype=np.float32)
                             light_d = torch.from_numpy(light_d).to(albedo.device)
-                            lambertian = self.ambient_ratio + (1 - self.ambient_ratio)  * (normal @ light_d).float().clamp(min=0)
+                            lambertian = self.ambient_ratio + (1 - self.ambient_ratio) * (
+                                        normal @ light_d).float().clamp(min=0)
                             buffer_image = (albedo * lambertian.unsqueeze(-1))[0]
-                    
+
                     # mix background
                     buffer_image = buffer_image * alpha + self.bg_color.to(buffer_image.device) * (1 - alpha)
 
@@ -515,8 +625,8 @@ class GUI:
         if self.need_update_overlay:
             buffer_overlay = np.zeros_like(self.buffer_overlay)
 
-            mv = self.cam.view # [4, 4]
-            proj = self.cam.perspective # [4, 4]
+            mv = self.cam.view  # [4, 4]
+            proj = self.cam.perspective  # [4, 4]
             mvp = proj @ mv
 
             mask = np.array(self.points_mask).astype(bool)
@@ -527,39 +637,55 @@ class GUI:
                 target_points = source_points + np.array(self.points_3d_delta)[mask]
                 points_indices = np.arange(len(self.points_3d))[mask]
 
-                source_points_clip = np.matmul(np.pad(source_points, ((0, 0), (0, 1)), constant_values=1.0), mvp.T)  # [N, 4]
-                target_points_clip = np.matmul(np.pad(target_points, ((0, 0), (0, 1)), constant_values=1.0), mvp.T)  # [N, 4]
-                source_points_clip[:, :3] /= source_points_clip[:, 3:] # perspective division
-                target_points_clip[:, :3] /= target_points_clip[:, 3:] # perspective division
+                source_points_clip = np.matmul(np.pad(source_points, ((0, 0), (0, 1)), constant_values=1.0),
+                                               mvp.T)  # [N, 4]
+                target_points_clip = np.matmul(np.pad(target_points, ((0, 0), (0, 1)), constant_values=1.0),
+                                               mvp.T)  # [N, 4]
+                source_points_clip[:, :3] /= source_points_clip[:, 3:]  # perspective division
+                target_points_clip[:, :3] /= target_points_clip[:, 3:]  # perspective division
 
-                source_points_2d = (((source_points_clip[:, :2] + 1) / 2) * np.array([self.H, self.W])).round().astype(np.int32)
-                target_points_2d = (((target_points_clip[:, :2] + 1) / 2) * np.array([self.H, self.W])).round().astype(np.int32)
+                source_points_2d = (((source_points_clip[:, :2] + 1) / 2) * np.array([self.H, self.W])).round().astype(
+                    np.int32)
+                target_points_2d = (((target_points_clip[:, :2] + 1) / 2) * np.array([self.H, self.W])).round().astype(
+                    np.int32)
 
                 radius = int((self.H + self.W) / 2 * 0.005)
                 for i in range(len(source_points_clip)):
                     point_idx = points_indices[i]
                     # draw source point
-                    if source_points_2d[i, 0] >= radius and source_points_2d[i, 0] < self.W - radius and source_points_2d[i, 1] >= radius and source_points_2d[i, 1] < self.H - radius:
-                        buffer_overlay[source_points_2d[i, 1]-radius:source_points_2d[i, 1]+radius, source_points_2d[i, 0]-radius:source_points_2d[i, 0]+radius] += np.array([1,0,0]) if not point_idx == self.point_idx else np.array([1,0.87,0])
+                    if source_points_2d[i, 0] >= radius and source_points_2d[i, 0] < self.W - radius and \
+                            source_points_2d[i, 1] >= radius and source_points_2d[i, 1] < self.H - radius:
+                        buffer_overlay[source_points_2d[i, 1] - radius:source_points_2d[i, 1] + radius,
+                        source_points_2d[i, 0] - radius:source_points_2d[i, 0] + radius] += np.array(
+                            [1, 0, 0]) if not point_idx == self.point_idx else np.array([1, 0.87, 0])
                         # draw target point
-                        if target_points_2d[i, 0] >= radius and target_points_2d[i, 0] < self.W - radius and target_points_2d[i, 1] >= radius and target_points_2d[i, 1] < self.H - radius:
-                            buffer_overlay[target_points_2d[i, 1]-radius:target_points_2d[i, 1]+radius, target_points_2d[i, 0]-radius:target_points_2d[i, 0]+radius] += np.array([0,0,1]) if not point_idx == self.point_idx else np.array([0.5,0.5,1])
+                        if target_points_2d[i, 0] >= radius and target_points_2d[i, 0] < self.W - radius and \
+                                target_points_2d[i, 1] >= radius and target_points_2d[i, 1] < self.H - radius:
+                            buffer_overlay[target_points_2d[i, 1] - radius:target_points_2d[i, 1] + radius,
+                            target_points_2d[i, 0] - radius:target_points_2d[i, 0] + radius] += np.array(
+                                [0, 0, 1]) if not point_idx == self.point_idx else np.array([0.5, 0.5, 1])
                         # draw line
-                        rr, cc, val = line_aa(source_points_2d[i, 1], source_points_2d[i, 0], target_points_2d[i, 1], target_points_2d[i, 0])
+                        rr, cc, val = line_aa(source_points_2d[i, 1], source_points_2d[i, 0], target_points_2d[i, 1],
+                                              target_points_2d[i, 0])
                         in_canvas_mask = (rr >= 0) & (rr < self.H) & (cc >= 0) & (cc < self.W)
-                        buffer_overlay[rr[in_canvas_mask], cc[in_canvas_mask]] += val[in_canvas_mask, None] * np.array([0,1,0]) if not point_idx == self.point_idx else np.array([0.5,1,0])
-            
+                        buffer_overlay[rr[in_canvas_mask], cc[in_canvas_mask]] += val[in_canvas_mask, None] * np.array(
+                            [0, 1, 0]) if not point_idx == self.point_idx else np.array([0.5, 1, 0])
+
             # draw bbox
             if self.enable_bbox_loss:
-                bbox_points = np.take_along_axis(np.array(self.bbox_points), CUBE_V, axis=0) # [8, 3]
-                bbox_points_clip = np.matmul(np.pad(bbox_points, ((0, 0), (0, 1)), constant_values=1.0), mvp.T)  # [N, 4]
-                bbox_points_clip[:, :3] /= bbox_points_clip[:, 3:] # perspective division
-                bbox_points_2d = (((bbox_points_clip[:, :2] + 1) / 2) * np.array([self.H, self.W])).round().astype(np.int32)
-                
+                bbox_points = np.take_along_axis(np.array(self.bbox_points), CUBE_V, axis=0)  # [8, 3]
+                bbox_points_clip = np.matmul(np.pad(bbox_points, ((0, 0), (0, 1)), constant_values=1.0),
+                                             mvp.T)  # [N, 4]
+                bbox_points_clip[:, :3] /= bbox_points_clip[:, 3:]  # perspective division
+                bbox_points_2d = (((bbox_points_clip[:, :2] + 1) / 2) * np.array([self.H, self.W])).round().astype(
+                    np.int32)
+
                 for e in CUBE_E:
-                    rr, cc, val = line_aa(bbox_points_2d[e[0], 1], bbox_points_2d[e[0], 0], bbox_points_2d[e[1], 1], bbox_points_2d[e[1], 0])
+                    rr, cc, val = line_aa(bbox_points_2d[e[0], 1], bbox_points_2d[e[0], 0], bbox_points_2d[e[1], 1],
+                                          bbox_points_2d[e[1], 0])
                     in_canvas_mask = (rr >= 0) & (rr < self.H) & (cc >= 0) & (cc < self.W)
-                    buffer_overlay[rr[in_canvas_mask], cc[in_canvas_mask]] += val[in_canvas_mask, None] * np.array([0.5,0.5,0.5]) # grey
+                    buffer_overlay[rr[in_canvas_mask], cc[in_canvas_mask]] += val[in_canvas_mask, None] * np.array(
+                        [0.5, 0.5, 0.5])  # grey
 
             self.buffer_overlay = buffer_overlay
             self.need_update_overlay = False
@@ -567,16 +693,15 @@ class GUI:
         ender.record()
         torch.cuda.synchronize()
         t = starter.elapsed_time(ender)
-        dpg.set_value("_log_infer_time", f'{t:.4f}ms ({int(1000/t)} FPS)')
+        dpg.set_value("_log_infer_time", f'{t:.4f}ms ({int(1000 / t)} FPS)')
 
         # mix image and overlay
         # buffer = np.clip(self.buffer_image + self.buffer_overlay, 0, 1) # mix mode, sometimes unclear
         overlay_mask = self.buffer_overlay.sum(axis=-1, keepdims=True) == 0
-        buffer = self.buffer_image * overlay_mask + self.buffer_overlay # replace mode
+        buffer = self.buffer_image * overlay_mask + self.buffer_overlay  # replace mode
 
         dpg.set_value("_texture", buffer)
 
-        
     def register_dpg(self):
 
         ### register texture 
@@ -592,11 +717,9 @@ class GUI:
             print("file_path = ", self.load_file_path)
             dpg.set_value("_log_get_mesh", f'mesh loaded in {time.time() - _t:.4f}s')
 
-
-
         with dpg.file_dialog(
-            directory_selector=False, show=False, callback=callback_file_select, tag="file_dialog_id",
-            cancel_callback=None, width=700, height=400):
+                directory_selector=False, show=False, callback=callback_file_select, tag="file_dialog_id",
+                cancel_callback=None, width=700, height=400):
             dpg.add_file_extension(".obj")
 
         ### register window
@@ -625,7 +748,7 @@ class GUI:
             with dpg.group(horizontal=True):
                 dpg.add_text("Infer time: ")
                 dpg.add_text("no data", tag="_log_infer_time")
-            
+
             # mesh stuff
             with dpg.collapsing_header(label="Generate", default_open=True):
 
@@ -649,11 +772,8 @@ class GUI:
                         torch.cuda.synchronize()
                         dpg.set_value("_log_get_mesh", f'generated in {time.time() - _t:.4f}s')
 
-
-
                     def callback_load_mesh(sender, app_data, user_data):
                         dpg.show_item("file_dialog_id")
-
 
                     # resample geo & tex
                     dpg.add_button(label="get", tag="_button_get_mesh", callback=callback_get_mesh, user_data=0)
@@ -689,20 +809,21 @@ class GUI:
                         self.mesh.auto_uv()
 
                         # rgb query
-                        uv = self.mesh.vt * 2.0 - 1.0 # uvs to range [-1, 1]
-                        uv = torch.cat((uv, torch.zeros_like(uv[..., :1]), torch.ones_like(uv[..., :1])), dim=-1) # [N, 4]
+                        uv = self.mesh.vt * 2.0 - 1.0  # uvs to range [-1, 1]
+                        uv = torch.cat((uv, torch.zeros_like(uv[..., :1]), torch.ones_like(uv[..., :1])),
+                                       dim=-1)  # [N, 4]
 
-                        rast, _ = dr.rasterize(self.glctx, uv.unsqueeze(0), self.mesh.ft, (h, w)) # [1, h, w, 4]
-                        xyzs, _ = dr.interpolate(self.mesh.v.unsqueeze(0), rast, self.mesh.f) # [1, h, w, 3]
+                        rast, _ = dr.rasterize(self.glctx, uv.unsqueeze(0), self.mesh.ft, (h, w))  # [1, h, w, 4]
+                        xyzs, _ = dr.interpolate(self.mesh.v.unsqueeze(0), rast, self.mesh.f)  # [1, h, w, 3]
 
                         # masked query 
                         xyzs = xyzs.view(-1, 3)
                         mask = (rast[..., 3] > 0).view(-1)
-                        
+
                         albedo = torch.zeros(h * w, 3, device=self.device, dtype=torch.float32)
 
                         if mask.any():
-                            xyzs = xyzs[mask] # [M, 3]
+                            xyzs = xyzs[mask]  # [M, 3]
 
                             # batched inference to avoid OOM
                             all_albedo = []
@@ -713,7 +834,7 @@ class GUI:
                                 head += 640000
 
                             albedo[mask] = torch.cat(all_albedo, dim=0)
-                        
+
                         albedo = albedo.view(h, w, -1)
                         mask = mask.view(h, w)
 
@@ -724,7 +845,7 @@ class GUI:
                         from sklearn.neighbors import NearestNeighbors
                         from scipy.ndimage import binary_dilation, binary_erosion
 
-                        inpaint_region = binary_dilation(mask, iterations=32) # pad width
+                        inpaint_region = binary_dilation(mask, iterations=32)  # pad width
                         inpaint_region[mask] = 0
 
                         search_region = mask.copy()
@@ -747,7 +868,7 @@ class GUI:
                     dpg.add_button(label="save", tag="_button_save_mesh", callback=callback_save_mesh)
                     dpg.bind_item_theme("_button_save_mesh", theme_button)
                     dpg.add_input_text(label="", default_value=self.save_path, callback=callback_set_save_path)
-            
+
             # drag stuff
             with dpg.collapsing_header(label="Drag", default_open=True):
 
@@ -769,13 +890,17 @@ class GUI:
                     # update states
                     self.points_3d.append(self.point_3d)
                     self.points_mask.append(True)
-                    self.points_3d_delta.append([0,0,0])
+                    self.points_3d_delta.append([0, 0, 0])
                     # update UI
                     _id = len(self.points_3d) - 1
                     dpg.add_group(parent="_group_keypoints", tag=f"_group_keypoint_{_id}", horizontal=True)
-                    dpg.add_text(parent=f"_group_keypoint_{_id}", default_value=f"{', '.join([f'{x:.3f}' for x in self.points_3d[_id]])} +")
-                    dpg.add_input_floatx(parent=f"_group_keypoint_{_id}", tag=f"_point_delta_{_id}", size=3, width=200, format="%.3f", on_enter=True, default_value=self.points_3d_delta[_id], callback=callback_update_keypoint_delta, user_data=_id)
-                    dpg.add_button(parent=f"_group_keypoint_{_id}", tag=f"_button_del_keypoint_{_id}", label="del", callback=callback_delete_keypoint, user_data=_id)
+                    dpg.add_text(parent=f"_group_keypoint_{_id}",
+                                 default_value=f"{', '.join([f'{x:.3f}' for x in self.points_3d[_id]])} +")
+                    dpg.add_input_floatx(parent=f"_group_keypoint_{_id}", tag=f"_point_delta_{_id}", size=3, width=200,
+                                         format="%.3f", on_enter=True, default_value=self.points_3d_delta[_id],
+                                         callback=callback_update_keypoint_delta, user_data=_id)
+                    dpg.add_button(parent=f"_group_keypoint_{_id}", tag=f"_button_del_keypoint_{_id}", label="del",
+                                   callback=callback_delete_keypoint, user_data=_id)
                     dpg.bind_item_theme(f"_button_del_keypoint_{_id}", theme_button)
                     # update rendering
                     self.need_update_overlay = True
@@ -785,7 +910,8 @@ class GUI:
 
                 with dpg.group(horizontal=True):
                     dpg.add_text("Keypoint: ")
-                    dpg.add_input_floatx(default_value=self.point_3d, size=3, width=200, format="%.3f", on_enter=False, callback=callback_update_new_keypoint)
+                    dpg.add_input_floatx(default_value=self.point_3d, size=3, width=200, format="%.3f", on_enter=False,
+                                         callback=callback_update_new_keypoint)
                     dpg.add_button(label="add", tag="_button_add_keypoint", callback=callback_add_keypoint)
                     dpg.bind_item_theme("_button_add_keypoint", theme_button)
 
@@ -800,12 +926,14 @@ class GUI:
                     # make sure left-bottom is smaller than right-top
                     if user_data[0] == 0:
                         self.bbox_points[1][user_data[1]] = max(app_data, self.bbox_points[1][user_data[1]])
-                        dpg.configure_item(f"_bbox_point_1_{user_data[1]}", default_value=self.bbox_points[1][user_data[1]])
+                        dpg.configure_item(f"_bbox_point_1_{user_data[1]}",
+                                           default_value=self.bbox_points[1][user_data[1]])
                     else:
                         self.bbox_points[0][user_data[1]] = min(app_data, self.bbox_points[0][user_data[1]])
-                        dpg.configure_item(f"_bbox_point_0_{user_data[1]}", default_value=self.bbox_points[0][user_data[1]])
+                        dpg.configure_item(f"_bbox_point_0_{user_data[1]}",
+                                           default_value=self.bbox_points[0][user_data[1]])
                     self.need_update_overlay = True
-                
+
                 def callback_toggle_mask_loss(sender, app_data):
                     self.enable_bbox_loss = not self.enable_bbox_loss
                     self.need_update_overlay = True
@@ -828,7 +956,7 @@ class GUI:
 
                     def callback_set_lr(sender, app_data):
                         self.lr = app_data
-                    
+
                     dpg.add_text("lr: ")
                     dpg.add_input_float(default_value=self.lr, width=150, format="%.6f", callback=callback_set_lr)
 
@@ -836,7 +964,8 @@ class GUI:
                     dpg.add_text("", tag="_log_train_log")
 
                 with dpg.group(horizontal=True):
-                    dpg.add_checkbox(label="bbox loss (modify in-bbox region)", default_value=self.enable_bbox_loss, callback=callback_toggle_mask_loss)
+                    dpg.add_checkbox(label="bbox loss (modify in-bbox region)", default_value=self.enable_bbox_loss,
+                                     callback=callback_toggle_mask_loss)
 
                     def callback_reset_bbox(sender, app_data):
                         if self.mesh is None:
@@ -853,21 +982,34 @@ class GUI:
 
                     def callback_set_bbox_loss_weight(sender, app_data):
                         self.bbox_loss_weight = app_data
-                    
+
                     dpg.add_text("weight: ")
-                    dpg.add_input_float(default_value=self.bbox_loss_weight, width=200, format="%.3f", callback=callback_set_bbox_loss_weight)
+                    dpg.add_input_float(default_value=self.bbox_loss_weight, width=200, format="%.3f",
+                                        callback=callback_set_bbox_loss_weight)
 
                 with dpg.group(horizontal=True):
                     dpg.add_text("left-bottom: ")
-                    dpg.add_slider_float(tag='_bbox_point_0_0', width=120, min_value=-1, max_value=1, format="%.3f", default_value=self.bbox_points[0][0], callback=callback_update_bbox_point, user_data=[0, 0])
-                    dpg.add_slider_float(tag='_bbox_point_0_1', width=120, min_value=-1, max_value=1, format="%.3f", default_value=self.bbox_points[0][1], callback=callback_update_bbox_point, user_data=[0, 1])
-                    dpg.add_slider_float(tag='_bbox_point_0_2', width=120, min_value=-1, max_value=1, format="%.3f", default_value=self.bbox_points[0][2], callback=callback_update_bbox_point, user_data=[0, 2])
+                    dpg.add_slider_float(tag='_bbox_point_0_0', width=120, min_value=-1, max_value=1, format="%.3f",
+                                         default_value=self.bbox_points[0][0], callback=callback_update_bbox_point,
+                                         user_data=[0, 0])
+                    dpg.add_slider_float(tag='_bbox_point_0_1', width=120, min_value=-1, max_value=1, format="%.3f",
+                                         default_value=self.bbox_points[0][1], callback=callback_update_bbox_point,
+                                         user_data=[0, 1])
+                    dpg.add_slider_float(tag='_bbox_point_0_2', width=120, min_value=-1, max_value=1, format="%.3f",
+                                         default_value=self.bbox_points[0][2], callback=callback_update_bbox_point,
+                                         user_data=[0, 2])
                 with dpg.group(horizontal=True):
                     dpg.add_text("right-top:   ")
-                    dpg.add_slider_float(tag='_bbox_point_1_0', width=120, min_value=-1, max_value=1, format="%.3f", default_value=self.bbox_points[1][0], callback=callback_update_bbox_point, user_data=[1, 0])
-                    dpg.add_slider_float(tag='_bbox_point_1_1', width=120, min_value=-1, max_value=1, format="%.3f", default_value=self.bbox_points[1][1], callback=callback_update_bbox_point, user_data=[1, 1])
-                    dpg.add_slider_float(tag='_bbox_point_1_2', width=120, min_value=-1, max_value=1, format="%.3f", default_value=self.bbox_points[1][2], callback=callback_update_bbox_point, user_data=[1, 2])
-            
+                    dpg.add_slider_float(tag='_bbox_point_1_0', width=120, min_value=-1, max_value=1, format="%.3f",
+                                         default_value=self.bbox_points[1][0], callback=callback_update_bbox_point,
+                                         user_data=[1, 0])
+                    dpg.add_slider_float(tag='_bbox_point_1_1', width=120, min_value=-1, max_value=1, format="%.3f",
+                                         default_value=self.bbox_points[1][1], callback=callback_update_bbox_point,
+                                         user_data=[1, 1])
+                    dpg.add_slider_float(tag='_bbox_point_1_2', width=120, min_value=-1, max_value=1, format="%.3f",
+                                         default_value=self.bbox_points[1][2], callback=callback_update_bbox_point,
+                                         user_data=[1, 2])
+
             # rendering options
             with dpg.collapsing_header(label="Rendering", default_open=True):
 
@@ -876,15 +1018,17 @@ class GUI:
                     self.mode = app_data
                     self.need_update = True
                     self.need_update_overlay = True
-                
-                dpg.add_combo(('albedo', 'depth', 'normal', 'lambertian'), label='mode', default_value=self.mode, callback=callback_change_mode)
+
+                dpg.add_combo(('albedo', 'depth', 'normal', 'lambertian'), label='mode', default_value=self.mode,
+                              callback=callback_change_mode)
 
                 # bg_color picker
                 def callback_change_bg(sender, app_data):
-                    self.bg_color = torch.tensor(app_data[:3], dtype=torch.float32) # only need RGB in [0, 1]
+                    self.bg_color = torch.tensor(app_data[:3], dtype=torch.float32)  # only need RGB in [0, 1]
                     self.need_update = True
 
-                dpg.add_color_edit((255, 255, 255), label="Background Color", width=200, tag="_color_editor", no_alpha=True, callback=callback_change_bg)
+                dpg.add_color_edit((255, 255, 255), label="Background Color", width=200, tag="_color_editor",
+                                   no_alpha=True, callback=callback_change_bg)
 
                 # fov slider
                 def callback_set_fovy(sender, app_data):
@@ -892,7 +1036,8 @@ class GUI:
                     self.need_update = True
                     self.need_update_overlay = True
 
-                dpg.add_slider_int(label="FoV (vertical)", min_value=1, max_value=120, format="%d deg", default_value=self.cam.fovy, callback=callback_set_fovy)
+                dpg.add_slider_int(label="FoV (vertical)", min_value=1, max_value=120, format="%d deg",
+                                   default_value=self.cam.fovy, callback=callback_set_fovy)
 
                 # light dir
                 def callback_set_light_dir(sender, app_data, user_data):
@@ -902,17 +1047,20 @@ class GUI:
                 dpg.add_text("Plane Light Direction:")
 
                 with dpg.group(horizontal=True):
-                    dpg.add_slider_float(label="theta", min_value=0, max_value=180, format="%.2f", default_value=self.light_dir[0], callback=callback_set_light_dir, user_data=0)
+                    dpg.add_slider_float(label="theta", min_value=0, max_value=180, format="%.2f",
+                                         default_value=self.light_dir[0], callback=callback_set_light_dir, user_data=0)
 
                 with dpg.group(horizontal=True):
-                    dpg.add_slider_float(label="phi", min_value=0, max_value=360, format="%.2f", default_value=self.light_dir[1], callback=callback_set_light_dir, user_data=1)
+                    dpg.add_slider_float(label="phi", min_value=0, max_value=360, format="%.2f",
+                                         default_value=self.light_dir[1], callback=callback_set_light_dir, user_data=1)
 
                 # ambient ratio
                 def callback_set_abm_ratio(sender, app_data):
                     self.ambient_ratio = app_data
                     self.need_update = True
 
-                dpg.add_slider_float(label="ambient", min_value=0, max_value=1.0, format="%.5f", default_value=self.ambient_ratio, callback=callback_set_abm_ratio)
+                dpg.add_slider_float(label="ambient", min_value=0, max_value=1.0, format="%.5f",
+                                     default_value=self.ambient_ratio, callback=callback_set_abm_ratio)
 
         ### register camera handler
 
@@ -928,7 +1076,6 @@ class GUI:
             self.need_update = True
             self.need_update_overlay = True
 
-
         def callback_camera_wheel_scale(sender, app_data):
 
             if not dpg.is_item_focused("_primary_window"):
@@ -939,7 +1086,6 @@ class GUI:
             self.cam.scale(delta)
             self.need_update = True
             self.need_update_overlay = True
-
 
         def callback_camera_drag_pan(sender, app_data):
 
@@ -953,7 +1099,6 @@ class GUI:
             self.need_update = True
             self.need_update_overlay = True
 
-
         def callback_set_mouse_loc(sender, app_data):
 
             if not dpg.is_item_focused("_primary_window"):
@@ -962,22 +1107,21 @@ class GUI:
             # just the pixel coordinate in image
             self.mouse_loc = np.array(app_data)
 
-
         def callback_keypoint_add(sender, app_data):
 
             if not dpg.is_item_focused("_primary_window") or self.buffer_rast is None:
                 return
-            
+
             # project mouse_loc to points_3d, if near to current, select it, else create new.
             rast = self.buffer_rast[0, int(self.mouse_loc[1]), int(self.mouse_loc[0])]
 
             # not hitting the mesh
             if rast[3] <= 0:
                 return
-            
+
             # use triangle-id and uv to interpolate the actual 3d point
-            trig = self.mesh.f[rast[3].long() - 1] # [3,]
-            vert = self.mesh.v[trig.long()] # [3, 3]
+            trig = self.mesh.f[rast[3].long() - 1]  # [3,]
+            vert = self.mesh.v[trig.long()]  # [3, 3]
             uv = rast[:2]
             point_3d = (1 - uv[0] - uv[1]) * vert[0] + uv[0] * vert[1] + uv[1] * vert[2]
             point_3d = point_3d.detach().cpu().numpy()
@@ -987,23 +1131,27 @@ class GUI:
             if len(self.points_3d) > 0:
                 cur_points = np.array(self.points_3d)
                 dist = np.linalg.norm(cur_points - point_3d, axis=1)
-                dist[~np.array(self.points_mask).astype(bool)] = 1e8 # ignore deleted points
+                dist[~np.array(self.points_mask).astype(bool)] = 1e8  # ignore deleted points
                 if np.min(dist) < 0.1:
                     # select the closest one
                     self.point_idx = np.argmin(dist)
                     flag_mark_close = True
-            
+
             # else add a new point
             if not flag_mark_close:
                 self.points_3d.append(point_3d.tolist())
                 self.points_mask.append(True)
-                self.points_3d_delta.append([0,0,0])
+                self.points_3d_delta.append([0, 0, 0])
                 # update UI
                 _id = len(self.points_3d) - 1
                 dpg.add_group(parent="_group_keypoints", tag=f"_group_keypoint_{_id}", horizontal=True)
-                dpg.add_text(parent=f"_group_keypoint_{_id}", default_value=f"{', '.join([f'{x:.3f}' for x in self.points_3d[_id]])} +")
-                dpg.add_input_floatx(parent=f"_group_keypoint_{_id}", tag=f"_point_delta_{_id}", size=3, width=200, format="%.3f", on_enter=True, default_value=self.points_3d_delta[_id], callback=callback_update_keypoint_delta, user_data=_id)
-                dpg.add_button(parent=f"_group_keypoint_{_id}", label="Del", callback=callback_delete_keypoint, user_data=_id)
+                dpg.add_text(parent=f"_group_keypoint_{_id}",
+                             default_value=f"{', '.join([f'{x:.3f}' for x in self.points_3d[_id]])} +")
+                dpg.add_input_floatx(parent=f"_group_keypoint_{_id}", tag=f"_point_delta_{_id}", size=3, width=200,
+                                     format="%.3f", on_enter=True, default_value=self.points_3d_delta[_id],
+                                     callback=callback_update_keypoint_delta, user_data=_id)
+                dpg.add_button(parent=f"_group_keypoint_{_id}", label="Del", callback=callback_delete_keypoint,
+                               user_data=_id)
                 self.point_idx = _id
 
             self.need_update_overlay = True
@@ -1021,7 +1169,7 @@ class GUI:
             dy = app_data[2]
 
             delta = 0.00004 * self.cam.rot.as_matrix()[:3, :3] @ np.array([dx, -dy, 0])
-        
+
             self.points_3d_delta[self.point_idx][0] += delta[0]
             self.points_3d_delta[self.point_idx][1] += delta[1]
             self.points_3d_delta[self.point_idx][2] += delta[2]
@@ -1041,7 +1189,8 @@ class GUI:
             dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Right, callback=callback_keypoint_add)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Right, callback=callback_keypoint_drag)
 
-        dpg.create_viewport(title='Drag Your 3DModel', width=self.W, height=self.H + (45 if os.name == 'nt' else 0), resizable=False)
+        dpg.create_viewport(title='Drag Your 3DModel', width=self.W, height=self.H + (45 if os.name == 'nt' else 0),
+                            resizable=False)
 
         ### global theme
         with dpg.theme() as theme_no_padding:
@@ -1050,7 +1199,7 @@ class GUI:
                 dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 0, 0, category=dpg.mvThemeCat_Core)
                 dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0, category=dpg.mvThemeCat_Core)
                 dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 0, 0, category=dpg.mvThemeCat_Core)
-        
+
         dpg.bind_item_theme("_primary_window", theme_no_padding)
 
         dpg.setup_dearpygui()
@@ -1062,10 +1211,9 @@ class GUI:
                 with dpg.font('LXGWWenKai-Regular.ttf', 18) as default_font:
                     dpg.bind_font(default_font)
 
-        #dpg.show_metrics()
+        # dpg.show_metrics()
 
         dpg.show_viewport()
-
 
     def render(self):
 
@@ -1080,67 +1228,102 @@ class GUI:
 @click.command()
 # Required from StyleGAN2.
 @click.option('--outdir', help='Where to save the results', metavar='DIR', required=True)
-@click.option('--cfg', help='Base configuration', type=click.Choice(['stylegan3-t', 'stylegan3-r', 'stylegan2']), default='stylegan2')
+@click.option('--cfg', help='Base configuration', type=click.Choice(['stylegan3-t', 'stylegan3-r', 'stylegan2']),
+              default='stylegan2')
 # @click.option('--gpus', help='Number of GPUs to use', metavar='INT', type=click.IntRange(min=1), required=True)
 # @click.option('--batch', help='Total batch size', metavar='INT', type=click.IntRange(min=1), required=True)
 # @click.option('--gamma', help='R1 regularization weight', metavar='FLOAT', type=click.FloatRange(min=0), required=True)
 # My custom configs
 ### Configs for inference
 @click.option('--resume_pretrain', help='Resume from given network pickle', metavar='[PATH|URL]', type=str)
-@click.option('--inference_vis', help='whther we run infernce', metavar='BOOL', type=bool, default=False, show_default=True)
-@click.option('--inference_to_generate_textured_mesh', help='inference to generate textured meshes', metavar='BOOL', type=bool, default=False, show_default=False)
-@click.option('--inference_save_interpolation', help='inference to generate interpolation results', metavar='BOOL', type=bool, default=False, show_default=False)
-@click.option('--inference_compute_fid', help='inference to generate interpolation results', metavar='BOOL', type=bool, default=False, show_default=False)
-@click.option('--inference_generate_geo', help='inference to generate geometry points', metavar='BOOL', type=bool, default=False, show_default=False)
+@click.option('--inference_vis', help='whther we run infernce', metavar='BOOL', type=bool, default=False,
+              show_default=True)
+@click.option('--inference_to_generate_textured_mesh', help='inference to generate textured meshes', metavar='BOOL',
+              type=bool, default=False, show_default=False)
+@click.option('--inference_save_interpolation', help='inference to generate interpolation results', metavar='BOOL',
+              type=bool, default=False, show_default=False)
+@click.option('--inference_compute_fid', help='inference to generate interpolation results', metavar='BOOL', type=bool,
+              default=False, show_default=False)
+@click.option('--inference_generate_geo', help='inference to generate geometry points', metavar='BOOL', type=bool,
+              default=False, show_default=False)
 ### Configs for dataset
 @click.option('--data', help='Path to the Training data Images', metavar='[DIR]', type=str, default='./tmp')
 @click.option('--camera_path', help='Path to the camera root', metavar='[DIR]', type=str, default='./tmp')
 @click.option('--img_res', help='The resolution of image', metavar='INT', type=click.IntRange(min=1), default=1024)
-@click.option('--data_camera_mode', help='The type of dataset we are using', type=str, default='shapenet_car', show_default=True)
-@click.option('--use_shapenet_split', help='whether use the training split or all the data for training', metavar='BOOL', type=bool, default=False, show_default=False)
+@click.option('--data_camera_mode', help='The type of dataset we are using', type=str, default='shapenet_car',
+              show_default=True)
+@click.option('--use_shapenet_split', help='whether use the training split or all the data for training',
+              metavar='BOOL', type=bool, default=False, show_default=False)
 ### Configs for 3D generator##########
-@click.option('--use_style_mixing', help='whether use style mixing for generation during inference', metavar='BOOL', type=bool, default=True, show_default=False)
-@click.option('--one_3d_generator', help='whether we detach the gradient for empty object', metavar='BOOL', type=bool, default=True, show_default=True)
-@click.option('--dmtet_scale', help='Scale for the dimention of dmtet', metavar='FLOAT', type=click.FloatRange(min=0, max=10.0), default=1.0, show_default=True)
-@click.option('--n_implicit_layer', help='Number of Implicit FC layer for XYZPlaneTex model', metavar='INT', type=click.IntRange(min=1), default=1)
-@click.option('--feat_channel', help='Feature channel for TORGB layer', metavar='INT', type=click.IntRange(min=0), default=16)
-@click.option('--mlp_latent_channel', help='mlp_latent_channel for XYZPlaneTex network', metavar='INT', type=click.IntRange(min=8), default=32)
-@click.option('--deformation_multiplier', help='Multiplier for the predicted deformation', metavar='FLOAT', type=click.FloatRange(min=1.0), default=1.0, required=False)
-@click.option('--tri_plane_resolution', help='The resolution for tri plane', metavar='INT', type=click.IntRange(min=1), default=256)
-@click.option('--n_views', help='number of views when training generator', metavar='INT', type=click.IntRange(min=1), default=1)
-@click.option('--use_tri_plane', help='Whether use tri plane representation', metavar='BOOL', type=bool, default=True, show_default=True)
+@click.option('--use_style_mixing', help='whether use style mixing for generation during inference', metavar='BOOL',
+              type=bool, default=True, show_default=False)
+@click.option('--one_3d_generator', help='whether we detach the gradient for empty object', metavar='BOOL', type=bool,
+              default=True, show_default=True)
+@click.option('--dmtet_scale', help='Scale for the dimention of dmtet', metavar='FLOAT',
+              type=click.FloatRange(min=0, max=10.0), default=1.0, show_default=True)
+@click.option('--n_implicit_layer', help='Number of Implicit FC layer for XYZPlaneTex model', metavar='INT',
+              type=click.IntRange(min=1), default=1)
+@click.option('--feat_channel', help='Feature channel for TORGB layer', metavar='INT', type=click.IntRange(min=0),
+              default=16)
+@click.option('--mlp_latent_channel', help='mlp_latent_channel for XYZPlaneTex network', metavar='INT',
+              type=click.IntRange(min=8), default=32)
+@click.option('--deformation_multiplier', help='Multiplier for the predicted deformation', metavar='FLOAT',
+              type=click.FloatRange(min=1.0), default=1.0, required=False)
+@click.option('--tri_plane_resolution', help='The resolution for tri plane', metavar='INT', type=click.IntRange(min=1),
+              default=256)
+@click.option('--n_views', help='number of views when training generator', metavar='INT', type=click.IntRange(min=1),
+              default=1)
+@click.option('--use_tri_plane', help='Whether use tri plane representation', metavar='BOOL', type=bool, default=True,
+              show_default=True)
 @click.option('--tet_res', help='Resolution for teteahedron', metavar='INT', type=click.IntRange(min=1), default=90)
 @click.option('--latent_dim', help='Dimention for latent code', metavar='INT', type=click.IntRange(min=1), default=512)
 @click.option('--geometry_type', help='The type of geometry generator', type=str, default='conv3d', show_default=True)
-@click.option('--render_type', help='Type of renderer we used', metavar='STR', type=click.Choice(['neural_render', 'spherical_gaussian']), default='neural_render', show_default=True)
+@click.option('--render_type', help='Type of renderer we used', metavar='STR',
+              type=click.Choice(['neural_render', 'spherical_gaussian']), default='neural_render', show_default=True)
 ### Configs for training loss and discriminator#
-@click.option('--d_architecture', help='The architecture for discriminator', metavar='STR', type=str, default='skip', show_default=True)
-@click.option('--use_pl_length', help='whether we apply path length regularization', metavar='BOOL', type=bool, default=False, show_default=False)  # We didn't use path lenth regularzation to avoid nan error
-@click.option('--gamma_mask', help='R1 regularization weight for mask', metavar='FLOAT', type=click.FloatRange(min=0), default=0.0, required=False)
-@click.option('--d_reg_interval', help='The internal for R1 regularization', metavar='INT', type=click.IntRange(min=1), default=16)
-@click.option('--add_camera_cond', help='Whether we add camera as condition for discriminator', metavar='BOOL', type=bool, default=True, show_default=True)
+@click.option('--d_architecture', help='The architecture for discriminator', metavar='STR', type=str, default='skip',
+              show_default=True)
+@click.option('--use_pl_length', help='whether we apply path length regularization', metavar='BOOL', type=bool,
+              default=False, show_default=False)  # We didn't use path lenth regularzation to avoid nan error
+@click.option('--gamma_mask', help='R1 regularization weight for mask', metavar='FLOAT', type=click.FloatRange(min=0),
+              default=0.0, required=False)
+@click.option('--d_reg_interval', help='The internal for R1 regularization', metavar='INT', type=click.IntRange(min=1),
+              default=16)
+@click.option('--add_camera_cond', help='Whether we add camera as condition for discriminator', metavar='BOOL',
+              type=bool, default=True, show_default=True)
 ## Miscs
 # Optional features.
 @click.option('--cond', help='Train conditional model', metavar='BOOL', type=bool, default=False, show_default=True)
-@click.option('--freezed', help='Freeze first layers of D', metavar='INT', type=click.IntRange(min=0), default=0, show_default=True)
+@click.option('--freezed', help='Freeze first layers of D', metavar='INT', type=click.IntRange(min=0), default=0,
+              show_default=True)
 # Misc hyperparameters.
 @click.option('--batch-gpu', help='Limit batch size per GPU', metavar='INT', type=click.IntRange(min=1), default=4)
-@click.option('--cbase', help='Capacity multiplier', metavar='INT', type=click.IntRange(min=1), default=32768, show_default=True)
-@click.option('--cmax', help='Max. feature maps', metavar='INT', type=click.IntRange(min=1), default=512, show_default=True)
+@click.option('--cbase', help='Capacity multiplier', metavar='INT', type=click.IntRange(min=1), default=32768,
+              show_default=True)
+@click.option('--cmax', help='Max. feature maps', metavar='INT', type=click.IntRange(min=1), default=512,
+              show_default=True)
 @click.option('--glr', help='G learning rate  [default: varies]', metavar='FLOAT', type=click.FloatRange(min=0))
-@click.option('--dlr', help='D learning rate', metavar='FLOAT', type=click.FloatRange(min=0), default=0.002, show_default=True)
+@click.option('--dlr', help='D learning rate', metavar='FLOAT', type=click.FloatRange(min=0), default=0.002,
+              show_default=True)
 @click.option('--map-depth', help='Mapping network depth  [default: varies]', metavar='INT', type=click.IntRange(min=1))
-@click.option('--mbstd-group', help='Minibatch std group size', metavar='INT', type=click.IntRange(min=1), default=4, show_default=True)
+@click.option('--mbstd-group', help='Minibatch std group size', metavar='INT', type=click.IntRange(min=1), default=4,
+              show_default=True)
 # Misc settings.
 @click.option('--desc', help='String to include in result dir name', metavar='STR', type=str)
 # @click.option('--metrics', help='Quality metrics', metavar='[NAME|A,B,C|none]', type=parse_comma_separated_list, default='fid50k', show_default=True)
-@click.option('--kimg', help='Total training duration', metavar='KIMG', type=click.IntRange(min=1), default=20000, show_default=True)
-@click.option('--tick', help='How often to print progress', metavar='KIMG', type=click.IntRange(min=1), default=1, show_default=True)  ##
-@click.option('--snap', help='How often to save snapshots', metavar='TICKS', type=click.IntRange(min=1), default=50, show_default=True)  ###
+@click.option('--kimg', help='Total training duration', metavar='KIMG', type=click.IntRange(min=1), default=20000,
+              show_default=True)
+@click.option('--tick', help='How often to print progress', metavar='KIMG', type=click.IntRange(min=1), default=1,
+              show_default=True)  ##
+@click.option('--snap', help='How often to save snapshots', metavar='TICKS', type=click.IntRange(min=1), default=50,
+              show_default=True)  ###
 @click.option('--seed', help='Random seed', metavar='INT', type=click.IntRange(min=0), default=0, show_default=True)
-@click.option('--fp32', help='Disable mixed-precision', metavar='BOOL', type=bool, default=True, show_default=True)  # Let's use fp32 all the case without clamping
-@click.option('--nobench', help='Disable cuDNN benchmarking', metavar='BOOL', type=bool, default=False, show_default=True)
-@click.option('--workers', help='DataLoader worker processes', metavar='INT', type=click.IntRange(min=0), default=3, show_default=True)
+@click.option('--fp32', help='Disable mixed-precision', metavar='BOOL', type=bool, default=True,
+              show_default=True)  # Let's use fp32 all the case without clamping
+@click.option('--nobench', help='Disable cuDNN benchmarking', metavar='BOOL', type=bool, default=False,
+              show_default=True)
+@click.option('--workers', help='DataLoader worker processes', metavar='INT', type=click.IntRange(min=0), default=3,
+              show_default=True)
 @click.option('-n', '--dry-run', help='Print training options and exit', is_flag=True)
 # GUI settings.
 @click.option('--height', help='GUI H', metavar='INT', type=click.IntRange(min=1), default=1024)
@@ -1259,7 +1442,7 @@ def main(**kwargs):
     # launch gui
     gui = GUI(c)
     gui.render()
-    
+
 
 if __name__ == "__main__":
     main()
