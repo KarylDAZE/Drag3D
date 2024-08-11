@@ -25,7 +25,7 @@ def read_mesh_to_ply(directory_path: str, mesh_path: str) -> trimesh.PointCloud:
     obj_name = directory_path + '/' + mesh_path + '.obj'
     image_name = directory_path + '/' + mesh_path + '_albedo.png'
     image = cv.imread(image_name)
-    vertices, faces, uvs, faces_indexes = read_obj(obj_name)
+    vertices, faces, uvs, faces_indices = read_obj(obj_name)
     mesh = trimesh.Trimesh(vertices, faces)
     texture_image = Image.open(image_name).convert('RGB')
 
@@ -40,12 +40,12 @@ def read_mesh_to_ply(directory_path: str, mesh_path: str) -> trimesh.PointCloud:
     for i in range(0, number_of_points):
         face_index = face_indices[i]
         point = points[i]
-        triangle_vertices = vertices[faces_indexes[face_index][:, 0]]
+        triangle_vertices = vertices[faces_indices[face_index][:, 0]]
         u, v, w = barycentric_coordinates(point, triangle_vertices)
         assert abs(u + v + w - 1.0) < 0.01, u + v + w
-        uv0 = uvs[faces_indexes[face_index][0][1]]
-        uv1 = uvs[faces_indexes[face_index][1][1]]
-        uv2 = uvs[faces_indexes[face_index][2][1]]
+        uv0 = uvs[faces_indices[face_index][0][1]]
+        uv1 = uvs[faces_indices[face_index][1][1]]
+        uv2 = uvs[faces_indices[face_index][2][1]]
         new_uv = u * uv0 + v * uv1 + w * uv2
         # new_uv = uv0 # for debug
         pixel_x = int(new_uv[0] * texture_image.width)
@@ -76,7 +76,7 @@ def read_mesh_to_ply(directory_path: str, mesh_path: str) -> trimesh.PointCloud:
 
 
 def main():
-    output = read_mesh_to_ply('trial_car', 'mesh2')
+    output = read_mesh_to_ply('trial_car', 'mesh0')
     print(output)
 
 if __name__ == '__main__':

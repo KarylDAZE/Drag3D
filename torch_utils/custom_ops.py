@@ -33,6 +33,7 @@ def _find_compiler_bindir():
         'C:/Program Files (x86)/Microsoft Visual Studio/*/BuildTools/VC/Tools/MSVC/*/bin/Hostx64/x64',
         'C:/Program Files (x86)/Microsoft Visual Studio/*/Community/VC/Tools/MSVC/*/bin/Hostx64/x64',
         'C:/Program Files (x86)/Microsoft Visual Studio */vc/bin',
+        'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/*/bin/Hostx64/x64',
     ]
     for pattern in patterns:
         matches = sorted(glob.glob(pattern))
@@ -76,7 +77,8 @@ def get_plugin(module_name, sources, headers=None, source_dir=None, **build_kwar
     if verbosity == 'full':
         print(f'Setting up PyTorch plugin "{module_name}"...')
     elif verbosity == 'brief':
-        print(f'Setting up PyTorch plugin "{module_name}"... ', end='', flush=True)
+        print(
+            f'Setting up PyTorch plugin "{module_name}"... ', end='', flush=True)
     verbose_build = (verbosity == 'full')
 
     # Compile and load.
@@ -85,7 +87,8 @@ def get_plugin(module_name, sources, headers=None, source_dir=None, **build_kwar
         if os.name == 'nt' and os.system("where cl.exe >nul 2>nul") != 0:
             compiler_bindir = _find_compiler_bindir()
             if compiler_bindir is None:
-                raise RuntimeError(f'Could not find MSVC/GCC/CLANG installation on this computer. Check _find_compiler_bindir() in "{__file__}".')
+                raise RuntimeError(
+                    f'Could not find MSVC/GCC/CLANG installation on this computer. Check _find_compiler_bindir() in "{__file__}".')
             os.environ['PATH'] += ';' + compiler_bindir
 
         # Some containers set TORCH_CUDA_ARCH_LIST to a list that can either
@@ -109,8 +112,10 @@ def get_plugin(module_name, sources, headers=None, source_dir=None, **build_kwar
         # around the *.cu dependency bug in ninja config.
         #
         all_source_files = sorted(sources + headers)
-        all_source_dirs = set(os.path.dirname(fname) for fname in all_source_files)
-        if len(all_source_dirs) == 1:  # and ('TORCH_EXTENSIONS_DIR' in os.environ):
+        all_source_dirs = set(os.path.dirname(fname)
+                              for fname in all_source_files)
+        # and ('TORCH_EXTENSIONS_DIR' in os.environ):
+        if len(all_source_dirs) == 1:
 
             # Compute combined hash digest for all source files.
             hash_md5 = hashlib.md5()
@@ -120,28 +125,34 @@ def get_plugin(module_name, sources, headers=None, source_dir=None, **build_kwar
 
             # Select cached build directory name.
             source_digest = hash_md5.hexdigest()
-            build_top_dir = torch.utils.cpp_extension._get_build_directory(module_name, verbose=verbose_build)  # pylint: disable=protected-access
-            cached_build_dir = os.path.join(build_top_dir, f'{source_digest}-{_get_mangled_gpu_name()}')
+            build_top_dir = torch.utils.cpp_extension._get_build_directory(
+                module_name, verbose=verbose_build)  # pylint: disable=protected-access
+            cached_build_dir = os.path.join(
+                build_top_dir, f'{source_digest}-{_get_mangled_gpu_name()}')
 
             if not os.path.isdir(cached_build_dir):
                 tmpdir = f'{build_top_dir}/srctmp-{uuid.uuid4().hex}'
                 os.makedirs(tmpdir)
                 for src in all_source_files:
-                    shutil.copyfile(src, os.path.join(tmpdir, os.path.basename(src)))
+                    shutil.copyfile(src, os.path.join(
+                        tmpdir, os.path.basename(src)))
                 try:
                     os.replace(tmpdir, cached_build_dir)  # atomic
                 except OSError:
                     # source directory already exists, delete tmpdir and its contents.
                     shutil.rmtree(tmpdir)
-                    if not os.path.isdir(cached_build_dir): raise
+                    if not os.path.isdir(cached_build_dir):
+                        raise
 
             # Compile.
-            cached_sources = [os.path.join(cached_build_dir, os.path.basename(fname)) for fname in sources]
+            cached_sources = [os.path.join(
+                cached_build_dir, os.path.basename(fname)) for fname in sources]
             torch.utils.cpp_extension.load(
                 name=module_name, build_directory=cached_build_dir,
                 verbose=verbose_build, sources=cached_sources, **build_kwargs)
         else:
-            torch.utils.cpp_extension.load(name=module_name, verbose=verbose_build, sources=sources, **build_kwargs)
+            torch.utils.cpp_extension.load(
+                name=module_name, verbose=verbose_build, sources=sources, **build_kwargs)
 
         # Load.
         module = importlib.import_module(module_name)

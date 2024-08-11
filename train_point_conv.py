@@ -23,15 +23,15 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     data_loader = DataLoader(dataset=Car3DDataSet(), batch_size=5, shuffle=True)
-    num_epochs = 50
+    num_epochs = 5
     for epoch in range(num_epochs):
         for inputs, targets in data_loader:
             inputs = inputs.to(device)
             targets = targets.to(device)
 
-            # 将输入数据从(批量大小, 50000, 6)转换为(批量大小, 6, 50000)以适应卷积
+            # 将输入数据从(batch_size, 10000, 6)转换为(batch_size, 6, 10000)以适应卷积
             inputs = inputs.permute(0, 2, 1)
-            # print(inputs.shape)
+            # print(inputs.shape) torch.Size([batch_size, 6, 10000])
             optimizer.zero_grad()
             outputs = model(inputs[:, :3, :], inputs[:, 3:, :])
             loss = criterion(outputs, targets)

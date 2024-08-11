@@ -4,7 +4,7 @@ import trimesh
 def read_obj(filename):
     vertices = []
     uvs = []
-    faces_indexes = []
+    faces_indices = []
     faces = []
     file = open(filename, 'r')
     for line in file:
@@ -24,9 +24,9 @@ def read_obj(filename):
             face = [int(part.split('/')[0]) - 1 for part in parts[1:]]  # 注意obj文件中的索引是从1开始的，这里减去1以匹配numpy数组
             faces.append(face)
             face1 = [[int(split_part) - 1 for split_part in part.split('/')] for part in parts[1:]]  # 注意obj文件中的索引是从1开始的，这里减去1以匹配numpy数组
-            faces_indexes.append(face1)
+            faces_indices.append(face1)
     file.close()
-    return np.array(vertices, dtype=np.float64), np.array(faces, dtype=np.int32), np.array(uvs, dtype=np.float64), np.array(faces_indexes, dtype=np.int32)
+    return np.array(vertices, dtype=np.float64), np.array(faces, dtype=np.int32), np.array(uvs, dtype=np.float64), np.array(faces_indices, dtype=np.int32)
 
 def main():
     read_obj('trial_car/mesh0.obj')

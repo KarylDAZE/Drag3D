@@ -20,4 +20,6 @@ rich
 numpy
 scikit-learn
 dearpygui
+matplotlib
+seaborn
 git+https://github.com/NVlabs/nvdiffrast/
