@@ -13,6 +13,7 @@ import trimesh
 import cv2
 import numpy as np
 from PIL import Image
+from read_obj import *
 
 device = (
     "cuda"
@@ -21,11 +22,6 @@ device = (
     if torch.backends.mps.is_available()
     else "cpu"
 )
-
-def model_loss(mesh_origin:Mesh,mesh_generated:Mesh):
-    loss=0
-
-    return loss
 
 def barycentric_coordinates(point, triangle_vertices):
     # 确保输入为numpy数组，并且是(n, 3)形状的二维数组
@@ -180,59 +176,70 @@ def main(**kwargs):
     # 设定损失函数和优化器
     # criterion = nn.MSELoss()  # 假设使用均方误差损失函数，根据实际需求更改
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    data_loader = DataLoader(dataset=Car3DDataSet(length=30), batch_size=batch_size, shuffle=False)        
+    data_loader = DataLoader(dataset=Car3DDataSet(length=50), batch_size=batch_size, shuffle=False)        
 
-    num_epochs = 10
+    num_epochs = 50
     for epoch in range(num_epochs):
         mesh_num=1
-        # color_gen_result=open("color_gen_result.txt","w+")
-        # color_ori_result=open("color_ori_result.txt","w+")
+
 
         # vertices_gen_result=open("vertices_gen_result.txt","w+")
         np.set_printoptions(threshold=np.inf)
-        for inputs in data_loader:
+
+        # target_pos_result=open("target_pos_result.txt","w+")
+        # target_color_result=open("target_color_result.txt","w+")
+        # get_pos_result=open("get_pos_result.txt","w+")
+        # get_color_result=open("get_color_result.txt","w+")
+
+        for inputs,targets in data_loader:
             inputs = inputs.to(device)
-            # targets = targets.to(device)
+            targets = targets.to(device)
 
             # 将输入数据从(batch_size, 10000, 6)转换为(batch_size, 6, 10000)以适应卷积
             inputs = inputs.permute(0, 2, 1)
             # print(inputs.shape) torch.Size([batch_size, 6, 10000])
-            outputs_combined_labels:torch.Tensor = model(inputs[:, :3, :], inputs[:, 3:, :])
-            optimizer.zero_grad()
+            # outputs_combined_labels=targets
+            outputs_combined_labels:torch.Tensor = model(inputs[:, :3, :], inputs[:, 3:, :]) #[batch,1024]
             loss=0
             for outputs_combined_label in outputs_combined_labels:
                 outputs_combined_label=outputs_combined_label.unsqueeze(0)
-                # outputs_combined_label=targets
                 # print(outputs_combined_label.shape)
                 mesh_generated=get3dWrapper.generate(ws_geo=outputs_combined_label[:,:512].repeat(1,22,1),ws_tex=outputs_combined_label[:,512:].repeat(1,9,1))
                 # vertices_gen_result.write(str(mesh_generated.v.cpu().numpy()))
-                get_vertices_pos:torch.Tensor=mesh_generated.v;
-                get_vertices_color:torch.Tensor=get3dWrapper.rgb(mesh_generated.v)
+                get_faces=mesh_generated.f
+                gen_vertices_pos:torch.Tensor=mesh_generated.v;
+                number_of_points =len(get_faces)
+                # print("get mesh v num:"+str(number_of_points))
+                get_vertices_pos=gen_vertices_pos[get_faces].mean(dim=1)
+                get_vertices_color:torch.Tensor=get3dWrapper.rgb(get_vertices_pos)
+                # pointCloud=trimesh.PointCloud(vertices=get_vertices_pos.cpu().detach().numpy(),colors=get_vertices_color.cpu().detach().numpy())
+                # pointCloud.show()
 
                 mesh_name = "mesh" + str(mesh_num)
                 path='trial_car/'+mesh_name
-                mesh_origin:trimesh.Trimesh = trimesh.load(path+".obj")
+
+                vertices, faces, uvs, faces_indices = read_obj(path+".obj")
+                mesh_target = trimesh.Trimesh(vertices, faces)
 
                 image_name=path+'_albedo.png'
                 texture_image = Image.open(image_name).convert('RGB')
 
                 # 采样点的数量
-                number_of_points =len(mesh_origin.vertices)
-                points, face_indices = mesh_origin.sample(number_of_points, return_index=True)
-
+                number_of_points =len(faces)
+                # print("origin mesh v num:"+str(number_of_points))
                 # 初始化一个颜色列表
-                ori_vertices_colors = []
+                vertices_colors = []
 
+                points=vertices[faces].mean(axis=1)
                 # 遍历所有采样点所在的三角形，并从纹理图像中采样颜色
                 for i in range(0, number_of_points):
-                    face_index = face_indices[i]
-                    point = points[i]
-                    triangle_vertices = mesh_origin.vertices[mesh_origin.faces[face_index]]
+                    point=points[i]
+                    triangle_vertices = vertices[faces_indices[i][:, 0]]
                     u, v, w = barycentric_coordinates(point, triangle_vertices)
                     assert abs(u + v + w - 1.0) < 0.01, u + v + w
-                    uv0 = mesh_origin.visual.uv[mesh_origin.faces[face_index][0]]
-                    uv1 = mesh_origin.visual.uv[mesh_origin.faces[face_index][1]]
-                    uv2 = mesh_origin.visual.uv[mesh_origin.faces[face_index][2]]
+                    uv0 = uvs[faces_indices[i][0][1]]
+                    uv1 = uvs[faces_indices[i][1][1]]
+                    uv2 = uvs[faces_indices[i][2][1]]
                     new_uv = u * uv0 + v * uv1 + w * uv2
                     # new_uv = uv0 # for debug
                     pixel_x = int(new_uv[0] * texture_image.width)
@@ -240,33 +247,45 @@ def main(**kwargs):
                     pixel_x = max(0, min(texture_image.width - 1, pixel_x))
                     pixel_y = max(0, min(texture_image.height - 1, pixel_y))
                     color = texture_image.getpixel((pixel_x, pixel_y))
+                    color=tuple(x/256 for x in color)
                     # 将颜色添加到颜色列表中
-                    ori_vertices_colors.append(color)
+                    vertices_colors.append(color)
 
-                target_vertices_pos=torch.tensor(mesh_origin.vertices,device=device, dtype=torch.float32, requires_grad=True)
-                target_vertices_color=torch.tensor(ori_vertices_colors,device=device, dtype=torch.float32, requires_grad=True)
+                target_vertices_pos=torch.tensor(points,device=device, dtype=torch.float32, requires_grad=True)
+                target_vertices_color=torch.tensor(vertices_colors,device=device, dtype=torch.float32, requires_grad=True)
+
+
+                # target_pos_result.write(str(target_vertices_pos.cpu().detach().numpy())+'\n')
+                # target_color_result.write(str(target_vertices_color.cpu().detach().numpy())+'\n')
+                # get_pos_result.write(str(get_vertices_pos.cpu().detach().numpy())+'\n')
+                # get_color_result.write(str(get_vertices_color.cpu().detach().numpy())+'\n')
 
                 # 计算两个距离矩阵
                 dist_matrix_get_to_target = torch.cdist(get_vertices_pos, target_vertices_pos, p=2)
-                dist_matrix_target_to_get = torch.cdist(target_vertices_pos, get_vertices_pos, p=2)
+                # dist_matrix_target_to_get = torch.cdist(target_vertices_pos, get_vertices_pos, p=2)
 
                 # 找到最短距离及其对应的索引
                 min_distances_get_to_target, min_indices_get_to_target = torch.min(dist_matrix_get_to_target, dim=1)
-                min_distances_target_to_get, min_indices_target_to_get = torch.min(dist_matrix_target_to_get, dim=1)
-
+                # min_distances_target_to_get, min_indices_target_to_get = torch.min(dist_matrix_target_to_get, dim=1)
+                # min_distances_get_to_target_result=open("min_distances_get_to_target_result.txt",'w+')
+                # min_distances_get_to_target_result.write(str(min_distances_get_to_target.cpu().detach().numpy())+'\n')
                 # 计算颜色向量的欧氏距离
                 # 对于 get_vertices_pos，每个最近的 target_vertices_pos 及其对应的颜色
                 nearest_target_colors_for_get = target_vertices_color[min_indices_get_to_target]
                 color_distances_get = torch.norm(get_vertices_color - nearest_target_colors_for_get, dim=1)
+                # color_distances_get_result=open("color_distances_get_result.txt",'w+')
+                # color_distances_get_result.write(str(color_distances_get.cpu().detach().numpy())+'\n')
 
                 # 对于 target_vertices_pos，每个最近的 get_vertices_pos 及其对应的颜色
-                nearest_get_colors_for_target = get_vertices_color[min_indices_target_to_get]
-                color_distances_target = torch.norm(target_vertices_color - nearest_get_colors_for_target, dim=1)
-
-                loss+=min_distances_get_to_target.sum()+min_distances_target_to_get.sum()+color_distances_get.sum()+color_distances_target.sum()
+                # nearest_get_colors_for_target = get_vertices_color[min_indices_target_to_get]
+                # color_distances_target = torch.norm(target_vertices_color - nearest_get_colors_for_target, dim=1)
+                loss+=min_distances_get_to_target.sum()+color_distances_get.sum()#+min_distances_target_to_get.sum()+color_distances_target.sum()
                 mesh_num+=1
+
+
             loss.backward()
             optimizer.step()
+            optimizer.zero_grad()
 
         print(f"Epoch {epoch + 1}, Loss: {loss.item():.4f}")
         losses.append(loss.item())

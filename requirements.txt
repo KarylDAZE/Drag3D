@@ -22,4 +22,5 @@ scikit-learn
 dearpygui
 matplotlib
 seaborn
+scikit-image
 git+https://github.com/NVlabs/nvdiffrast/

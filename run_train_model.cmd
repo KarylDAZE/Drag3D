@@ -1,0 +1,1 @@
+python train_model.py --outdir trial_car --resume_pretrain pretrained_model/shapenet_car.pt

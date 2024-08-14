@@ -132,20 +132,15 @@ class GET3DWrapper:
     def rgb(self, pos):
         # pos: [N, 3] torch float tensor
         np.set_printoptions(threshold=np.inf)
-        # pos_output=open('pos_output.txt', 'w+')
-        # print("pos:"+str(pos.shape))
-        # pos_output.write(str(pos.cpu().numpy()))
         
         # query triplane feature
         tex_feat = self.G.synthesis.generator.get_texture_prediction(self.mesh.tex_feature, pos.unsqueeze(0),
                                                                      self.mesh.ws_tex_last)  # [1, N, C]
-        # print("tex_feat:"+str(tex_feat.shape)) [1,87762,16]
 
         # project to rgb space (to_rgb is 1x1 conv, so we can use it as an MLP)
         rgb = self.G.synthesis.to_rgb(tex_feat.permute(0, 2, 1).contiguous().unsqueeze(-1),
                                       self.mesh.ws_tex_last[:, -1]).squeeze(-1).squeeze(0).t().contiguous()
         rgb = (rgb + 1) / 2
-        # print(rgb.shape) [52451,3]
         return rgb
 
     @torch.no_grad()
@@ -1377,13 +1372,6 @@ def main(**kwargs):
         c.G_kwargs.conv_clamp = c.D_kwargs.conv_clamp = None
     if opts.nobench:
         c.cudnn_benchmark = False
-
-    # output some value to file
-    output_geometry_vertex = open('geometry_vertex_result.txt', 'w')
-    output_geometry_faces = open('geometry_face_result.txt', 'w')
-
-    sdf_feature_output = open('sdf_feature.txt', 'w+')
-    tex_feature_output = open('tex_feature.txt', 'w+')
     
     # launch gui
     gui = GUI(c)
