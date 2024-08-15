@@ -153,9 +153,9 @@ class GET3DWrapper:
 
         ws_geo = self.G.mapping_geo(geo_z, None, truncation_psi=0.7, truncation_cutoff=None,
                                     update_emas=False)  # [1, 22, 512]
-        np.set_printoptions(threshold=np.inf)
-        geo_output = open('geo_result.txt', 'a+')
-        geo_output.write(str(np.asarray(ws_geo[:,0].cpu())) + '\n')
+        # np.set_printoptions(threshold=np.inf)
+        # geo_output = open('geo_result.txt', 'a+')
+        # geo_output.write(str(np.asarray(ws_geo[:,0].cpu())) + '\n')
         # print(str(np.asarray(ws_geo.cpu()),str(np.asarray(geo_z.cpu()))))
         return ws_geo
 
@@ -168,8 +168,8 @@ class GET3DWrapper:
 
         ws_tex = self.G.mapping(tex_z, None, truncation_psi=0.7, truncation_cutoff=None,
                                 update_emas=False)  # [1, 9, 512]
-        tex_output = open('tex_result.txt', 'a+')
-        tex_output.write(str(np.asarray(ws_tex[:,0].cpu())) + '\n')
+        # tex_output = open('tex_result.txt', 'a+')
+        # tex_output.write(str(np.asarray(ws_tex[:,0].cpu())) + '\n')
         return ws_tex
 
     def generate(self, ws_geo=None, ws_tex=None, geo_z=None, tex_z=None):
@@ -191,6 +191,9 @@ class GET3DWrapper:
         # geometry
         v, f, sdf, deformation, v_deformed, sdf_reg_loss = self.G.synthesis.get_geometry_prediction(ws_geo_last,
                                                                                                     sdf_feature)
+        # print(f'generate sdf:{sdf.shape}') #[1,98653,1]
+
+
         # v_on_cpu = v[0].cpu().detach().numpy()
         # v_list_data = v_on_cpu.tolist()
         # output_geometry_vertex.write(str(v_list_data) + '\n')
@@ -198,7 +201,7 @@ class GET3DWrapper:
         # f_list_data = f_on_cpu.tolist()
         # output_geometry_faces.write(str(f_list_data) + '\n')
 
-        np.set_printoptions(threshold=np.inf)
+        # np.set_printoptions(threshold=np.inf)
         # print("v:"+str(v[0].cpu().detach().numpy().shape)) #[9972,3]
         # print("f:"+str(f[0].cpu().detach().numpy().shape)) #[20068,3]
 
@@ -305,7 +308,12 @@ class GUI:
         # self.optimizer = torch.optim.AdamW([self.ws_geo_param], lr=self.lr)
 
         # l_start = 4 # skip optimizing early feature layers as suggested in paper
-        l_start = 4  # try to optimize an early feature layer to generate a better result for large scale drag
+        points_3d_delta_array = np.array(self.points_3d_delta)
+        mean=np.mean(points_3d_delta_array,axis=0)
+        if np.linalg.norm(mean)>0.06:
+            l_start = 3  # try to optimize an early feature layer to generate a better result for large scale drag
+        else:
+            l_start = 4
         self.ws_geo_nonparam = self.mesh.ws_geo[:, :l_start].clone()  # [1, l, 512]
         self.ws_geo_param = torch.nn.Parameter(self.mesh.ws_geo[:, l_start:].clone())  # [1, 22-l, 512]
         self.optimizer = torch.optim.Adam([self.ws_geo_param], lr=self.lr)
@@ -363,6 +371,7 @@ class GUI:
                                                                                    shifted_points.reshape(1, -1, 3),
                                                                                    return_feats=True).reshape(B, N,
                                                                                                               -1)  # [B, N, C]
+            # print(f'train_step patched_feat:{patched_feat.shape}') #[343,1,32]
 
             loss = F.l1_loss(shifted_feat, patched_feat.detach())
 
@@ -424,7 +433,6 @@ class GUI:
                 # dist[(B - 1) // 2] = 1e8 # forbid always staying in the same point...
                 indices = torch.argmin(dist, dim=0)  # [N]
                 # print(indices)
-
                 # update points_3d and delta
                 new_source_points = torch.gather(patched_points, dim=0,
                                                  index=indices.view(1, -1, 1).repeat(1, 1, 3)).squeeze(1)  # [N, 3]
@@ -445,6 +453,7 @@ class GUI:
             # update geometry
             v, f, sdf, deformation, v_deformed, sdf_reg_loss = self.model.G.synthesis.get_geometry_prediction(
                 self.mesh.ws_geo_last, new_sdf_feature)
+            # how to use sdf to update mesh?
             # sdf_output.write(str(np.asarray(sdf.cpu()).tolist()) + '\n')
             # build mesh object
             mesh = Mesh(v=v[0].float().contiguous(), f=f[0].int().contiguous(), device=self.device)
