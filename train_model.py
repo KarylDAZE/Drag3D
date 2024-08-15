@@ -170,9 +170,11 @@ def main(**kwargs):
     G_kwargs.fused_modconv_default = 'inference_only'
     get3dWrapper=GET3DWrapper(device=device,G_kwargs=G_kwargs,resume_pretrain="pretrained_model/shapenet_car.pt")
 
-    batch_size=2
+    batch_size=5
     losses = []
     model = PointConvDensityClsSsg().to(device)
+    model.load_state_dict(torch.load('encoder_model.pth'))  # 从保存的文件中加载模型参数
+
     # 设定损失函数和优化器
     # criterion = nn.MSELoss()  # 假设使用均方误差损失函数，根据实际需求更改
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -251,8 +253,8 @@ def main(**kwargs):
                     # 将颜色添加到颜色列表中
                     vertices_colors.append(color)
 
-                target_vertices_pos=torch.tensor(points,device=device, dtype=torch.float32, requires_grad=True)
-                target_vertices_color=torch.tensor(vertices_colors,device=device, dtype=torch.float32, requires_grad=True)
+                target_vertices_pos=torch.tensor(points,device=device, dtype=torch.float32, requires_grad=False)
+                target_vertices_color=torch.tensor(vertices_colors,device=device, dtype=torch.float32, requires_grad=False)
 
 
                 # target_pos_result.write(str(target_vertices_pos.cpu().detach().numpy())+'\n')
@@ -260,35 +262,78 @@ def main(**kwargs):
                 # get_pos_result.write(str(get_vertices_pos.cpu().detach().numpy())+'\n')
                 # get_color_result.write(str(get_vertices_color.cpu().detach().numpy())+'\n')
 
-                # 计算两个距离矩阵
-                dist_matrix_get_to_target = torch.cdist(get_vertices_pos, target_vertices_pos, p=2)
-                # dist_matrix_target_to_get = torch.cdist(target_vertices_pos, get_vertices_pos, p=2)
+                # # 计算两个距离矩阵
+                # dist_matrix_get_to_target = torch.cdist(get_vertices_pos, target_vertices_pos, p=2)
+                # # dist_matrix_target_to_get = torch.cdist(target_vertices_pos, get_vertices_pos, p=2)
 
-                # 找到最短距离及其对应的索引
-                min_distances_get_to_target, min_indices_get_to_target = torch.min(dist_matrix_get_to_target, dim=1)
-                # min_distances_target_to_get, min_indices_target_to_get = torch.min(dist_matrix_target_to_get, dim=1)
-                # min_distances_get_to_target_result=open("min_distances_get_to_target_result.txt",'w+')
-                # min_distances_get_to_target_result.write(str(min_distances_get_to_target.cpu().detach().numpy())+'\n')
-                # 计算颜色向量的欧氏距离
-                # 对于 get_vertices_pos，每个最近的 target_vertices_pos 及其对应的颜色
-                nearest_target_colors_for_get = target_vertices_color[min_indices_get_to_target]
-                color_distances_get = torch.norm(get_vertices_color - nearest_target_colors_for_get, dim=1)
-                # color_distances_get_result=open("color_distances_get_result.txt",'w+')
-                # color_distances_get_result.write(str(color_distances_get.cpu().detach().numpy())+'\n')
+                # # 找到最短距离及其对应的索引
+                # min_distances_get_to_target, min_indices_get_to_target = torch.min(dist_matrix_get_to_target, dim=1)
+                # # min_distances_target_to_get, min_indices_target_to_get = torch.min(dist_matrix_target_to_get, dim=1)
+                # # min_distances_get_to_target_result=open("min_distances_get_to_target_result.txt",'w+')
+                # # min_distances_get_to_target_result.write(str(min_distances_get_to_target.cpu().detach().numpy())+'\n')
+                # # 计算颜色向量的欧氏距离
+                # # 对于 get_vertices_pos，每个最近的 target_vertices_pos 及其对应的颜色
+                # nearest_target_colors_for_get = target_vertices_color[min_indices_get_to_target]
+                # color_distances_get = torch.norm(get_vertices_color - nearest_target_colors_for_get, dim=1)
+                # # color_distances_get_result=open("color_distances_get_result.txt",'w+')
+                # # color_distances_get_result.write(str(color_distances_get.cpu().detach().numpy())+'\n')
 
-                # 对于 target_vertices_pos，每个最近的 get_vertices_pos 及其对应的颜色
-                # nearest_get_colors_for_target = get_vertices_color[min_indices_target_to_get]
-                # color_distances_target = torch.norm(target_vertices_color - nearest_get_colors_for_target, dim=1)
-                loss+=min_distances_get_to_target.sum()+color_distances_get.sum()#+min_distances_target_to_get.sum()+color_distances_target.sum()
+                # # 对于 target_vertices_pos，每个最近的 get_vertices_pos 及其对应的颜色
+                # # nearest_get_colors_for_target = get_vertices_color[min_indices_target_to_get]
+                # # color_distances_target = torch.norm(target_vertices_color - nearest_get_colors_for_target, dim=1)
+                # loss+=min_distances_get_to_target.sum()+color_distances_get.sum()#+min_distances_target_to_get.sum()+color_distances_target.sum()
+
+                # 初始化变量存储最短距离和颜色距离的总和
+                sum_min_distances_get_to_target = 0
+                sum_color_distances_get = 0
+
+                # 逐点计算 get_vertices_pos 到 target_vertices_pos 的最短距离
+                for i in range(get_vertices_pos.shape[0]):
+                    with torch.no_grad():
+                        # 扩展维度以进行广播
+                        distances = torch.norm(target_vertices_pos - get_vertices_pos[i].unsqueeze(0), dim=1)
+                        # 找到最短距离及其对应索引
+                        _, min_idx = torch.min(distances, dim=0)
+                        
+                    # 累加最短距离
+                    sum_min_distances_get_to_target += torch.norm(target_vertices_pos[min_idx]- get_vertices_pos[i],dim=0)
+                    
+                    # 计算颜色距离
+                    color_distance = torch.norm(target_vertices_color[min_idx]-get_vertices_color[i], dim=0)
+                    sum_color_distances_get += color_distance
+
+                # # 初始化变量存储 target 到 get 的最短距离和颜色距离的总和
+                # sum_min_distances_target_to_get = 0
+                # sum_color_distances_target = 0
+
+                # # 逐点计算 target_vertices_pos 到 get_vertices_pos 的最短距离
+                # for i in range(target_vertices_pos.shape[0]):
+                #     with torch.no_grad():
+                #         # 扩展维度以进行广播
+                #         distances = torch.norm(get_vertices_pos - target_vertices_pos[i].unsqueeze(0), dim=1)
+                #         # 找到最短距离及其对应索引
+                #         _, min_idx = torch.min(distances, dim=0)
+                    
+                #     # 累加最短距离
+                #     sum_min_distances_target_to_get += torch.norm(get_vertices_pos[min_idx]- target_vertices_pos[i],dim=0)
+                    
+                #     # 计算颜色距离
+                #     color_distance = torch.norm(get_vertices_color[min_idx]-target_vertices_color[i], dim=0)
+                #     sum_color_distances_target += color_distance
+
+                # 计算总损失
+                loss+= sum_min_distances_get_to_target + sum_color_distances_get#+sum_min_distances_target_to_get+sum_color_distances_target
                 mesh_num+=1
 
-
+            print(f"patch loss: {loss.item():.4f}",end=' ')
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
+        print('')
         print(f"Epoch {epoch + 1}, Loss: {loss.item():.4f}")
         losses.append(loss.item())
+        torch.save(model.state_dict(), 'encoder_model.pth')
 
     print(losses)
     torch.save(model.state_dict(), 'encoder_model.pth')
